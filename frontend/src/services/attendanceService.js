@@ -382,6 +382,152 @@ export const attendanceService = {
   },
 
   /**
+   * Get monthly attendance reports with employee-wise breakdown, working days, and late reasons
+   */
+  async getMonthlyReport(params = {}) {
+    try {
+      const response = await api.get('/api/reports/monthly', { params });
+      return response.data;
+    } catch (error) {
+      if (!error.response || error.response?.status >= 500) {
+        // Fallback: calculate using client Firestore records
+        return await this.getMonthlyReportFromFirestoreDirectly(params);
+      }
+      throw new Error(error.response?.data?.detail || error.response?.data?.message || 'Could not fetch monthly attendance report');
+    }
+  },
+
+  /**
+   * Client-side direct Firestore calculation fallback for monthly attendance reports
+   */
+  async getMonthlyReportFromFirestoreDirectly(params = {}) {
+    try {
+      const monthStr = params.month || new Date().toISOString().slice(0, 7);
+      const [year, month] = monthStr.includes('-')
+        ? monthStr.split('-').map(Number)
+        : [new Date().getFullYear(), new Date().getMonth() + 1];
+
+      const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+      const recs = await this.getRecordsFromFirestoreDirectly({
+        start_date: `${monthPrefix}-01`,
+        end_date: `${monthPrefix}-31`,
+      });
+
+      const monthName = new Date(year, month - 1, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
+      // Working days calculation
+      const today = new Date();
+      const isCurrentMonth = today.getFullYear() === year && (today.getMonth() + 1) === month;
+      const daysInMonth = new Date(year, month, 0).getDate();
+      const cutoffDay = isCurrentMonth ? today.getDate() : daysInMonth;
+
+      let workingDays = 0;
+      for (let d = 1; d <= cutoffDay; d++) {
+        const dayOfWeek = new Date(year, month - 1, d).getDay();
+        if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+          workingDays++;
+        }
+      }
+
+      // Group by employee
+      const empMap = {};
+      recs.forEach((r) => {
+        const key = r.employeeId || r.employeeName || 'Unknown';
+        if (!empMap[key]) {
+          empMap[key] = {
+            employeeId: r.employeeId || key,
+            employeeName: r.employeeName || key,
+            email: r.email || `${key.toLowerCase()}@arshithgroup.com`,
+            department: r.department || 'Operations',
+            presentDates: new Set(),
+            wfoDays: 0,
+            wfhDays: 0,
+            lateDays: 0,
+            lateReasons: [],
+            dailyRecords: [],
+          };
+        }
+        const emp = empMap[key];
+        const isWfo = (r.workMode || '').toUpperCase() === 'WFO';
+        if (isWfo) emp.wfoDays++;
+        else emp.wfhDays++;
+
+        if (r.isLate) {
+          emp.lateDays++;
+          if (r.lateReason) {
+            emp.lateReasons.push({ date: r.date, reason: r.lateReason });
+          }
+        }
+        emp.presentDates.add(r.date);
+        emp.dailyRecords.push(r);
+      });
+
+      const employees = Object.values(empMap).map((emp) => {
+        const presentDays = emp.presentDates.size;
+        const approvedLeaveDays = 0;
+        const eligibleDays = Math.max(0, workingDays - approvedLeaveDays);
+        const attendancePercentage = eligibleDays > 0 ? Math.round((presentDays * 1000) / eligibleDays) / 10 : 0;
+        const absentDays = Math.max(0, eligibleDays - presentDays);
+
+        return {
+          employeeId: emp.employeeId,
+          employeeName: emp.employeeName,
+          email: emp.email,
+          department: emp.department,
+          presentDays,
+          workingDays,
+          approvedLeaveDays,
+          absentDays,
+          attendancePercentage,
+          wfoDays: emp.wfoDays,
+          wfhDays: emp.wfhDays,
+          lateDays: emp.lateDays,
+          lateReasons: emp.lateReasons,
+          dailyRecords: emp.dailyRecords,
+        };
+      });
+
+      employees.sort((a, b) => b.attendancePercentage - a.attendancePercentage);
+
+      const totalWfo = employees.reduce((acc, e) => acc + e.wfoDays, 0);
+      const totalWfh = employees.reduce((acc, e) => acc + e.wfhDays, 0);
+      const totalLate = employees.reduce((acc, e) => acc + e.lateDays, 0);
+      const totalPresent = employees.reduce((acc, e) => acc + e.presentDays, 0);
+      const totalAbsent = employees.reduce((acc, e) => acc + e.absentDays, 0);
+
+      return {
+        month: monthPrefix,
+        monthName,
+        totalWorkingDays: workingDays,
+        summary: {
+          totalRecords: recs.length,
+          wfo: totalWfo,
+          wfh: totalWfh,
+          late: totalLate,
+          present: totalPresent,
+          absent: totalAbsent,
+        },
+        analytics: {
+          wfo: totalWfo,
+          wfh: totalWfh,
+          late: totalLate,
+          present: totalPresent,
+          absent: totalAbsent,
+          tiers: {
+            excellent: employees.filter((e) => e.attendancePercentage >= 90).length,
+            good: employees.filter((e) => e.attendancePercentage >= 75 && e.attendancePercentage < 90).length,
+            low: employees.filter((e) => e.attendancePercentage < 75).length,
+          },
+        },
+        employees,
+      };
+    } catch (err) {
+      console.error('[AttendanceService] Direct monthly report fallback error:', err);
+      return null;
+    }
+  },
+
+  /**
    * Get attendance summary counts with optional single date or date-range parameters
    */
   async getSummary(params = {}) {
