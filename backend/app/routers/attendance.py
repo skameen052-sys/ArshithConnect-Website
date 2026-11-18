@@ -257,6 +257,20 @@ def format_attendance_response(att: Any, emp: Optional[Any] = None) -> dict:
                 if computed_dur != "--":
                     duration_val = computed_dur
 
+        is_late_flag = bool(
+            att.get("is_late")
+            or att.get("isLate")
+            or att.get("lateLogin")
+            or (str(att.get("status", "")).lower() == "late")
+            or (att.get("late_reason") or att.get("lateReason") or att.get("reason"))
+        )
+        late_reason_str = att.get("late_reason") or att.get("lateReason") or att.get("reason") or None
+        late_status_str = (
+            att.get("late_reason_status")
+            or att.get("lateReasonStatus")
+            or ("SUBMITTED" if late_reason_str else ("PENDING" if is_late_flag else "NOT_REQUIRED"))
+        )
+
         return {
             "id": att.get("id"),
             "employeeId": emp_id,
@@ -267,11 +281,11 @@ def format_attendance_response(att: Any, emp: Optional[Any] = None) -> dict:
             "checkIn": checkin_str,
             "checkOut": checkout_str,
             "workMode": att.get("work_mode") or att.get("workMode") or "WFO",
-            "status": att.get("status", "Present"),
+            "status": "Late" if (str(att.get("status", "")).lower() == "late" or (is_late_flag and str(att.get("status", "")).lower() == "present")) else att.get("status", "Present"),
             "duration": duration_val,
-            "isLate": bool(att.get("is_late") or att.get("isLate") or att.get("lateLogin")),
-            "lateReason": att.get("late_reason") or att.get("lateReason") or None,
-            "lateReasonStatus": att.get("late_reason_status") or att.get("lateReasonStatus") or ("SUBMITTED" if (att.get("late_reason") or att.get("lateReason")) else ("PENDING" if (att.get("is_late") or att.get("isLate") or att.get("lateLogin")) else "NOT_REQUIRED")),
+            "isLate": is_late_flag,
+            "lateReason": late_reason_str,
+            "lateReasonStatus": late_status_str,
             "lateReasonSubmittedAt": att.get("late_reason_submitted_at") or att.get("lateReasonSubmittedAt") or None,
             "checkInLatitude": att.get("check_in_latitude") or att.get("checkInLatitude"),
             "checkInLongitude": att.get("check_in_longitude") or att.get("checkInLongitude"),
@@ -379,10 +393,29 @@ def get_attendance_records(
     workMode: Optional[str] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
     record_date: Optional[str] = Query(None, alias="date"),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    from_date: Optional[str] = Query(None),
+    to_date: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """Get all attendance records across both mobile and web via Firestore or PostgreSQL."""
+    """Get all attendance records across both mobile and web via Firestore or PostgreSQL with single-date or date-range filtering."""
+    search_str = search if isinstance(search, str) else None
+    work_mode_str = workMode if isinstance(workMode, str) else None
+    status_filter_str = status_filter if isinstance(status_filter, str) else None
+    record_date_str = record_date if isinstance(record_date, str) else None
+    start_date_str = start_date if isinstance(start_date, str) else None
+    end_date_str = end_date if isinstance(end_date, str) else None
+    from_date_str = from_date if isinstance(from_date, str) else None
+    to_date_str = to_date if isinstance(to_date, str) else None
+
+    effective_start = (start_date_str or from_date_str or "").strip()
+    effective_end = (end_date_str or to_date_str or "").strip()
+    if record_date_str and not effective_start and not effective_end:
+        effective_start = record_date_str.strip()
+        effective_end = record_date_str.strip()
+
     if settings.DATABASE_BACKEND == "firebase":
         top_records = FirestoreService.list_all("attendance")
         cg_records = FirestoreService.collection_group("records")
@@ -401,6 +434,8 @@ def get_attendance_records(
             emp_id = r.get("employee_id") or r.get("employeeId") or r.get("employee_uid") or ""
             dt = str(r.get("date", "")).strip()
             key = f"{emp_id}_{dt}"
+            if not r.get("lateReason") and (r.get("late_reason") or r.get("reason")):
+                r["lateReason"] = r.get("late_reason") or r.get("reason")
             merged[key] = r
 
         for cr in cg_records:
@@ -410,6 +445,20 @@ def get_attendance_records(
             emp = all_emps.get(str(eid)) or all_emps.get(str(cr.get("email", "")).lower().strip()) or {}
             real_emp_id = emp.get("employeeId") or emp.get("employee_id") or eid
             real_key = f"{real_emp_id}_{dt}"
+
+            late_reason_val = cr.get("lateReason") or cr.get("late_reason") or cr.get("reason") or None
+            is_late_val = bool(
+                cr.get("lateLogin")
+                or cr.get("is_late")
+                or (str(cr.get("status", "")).lower() == "late")
+                or (late_reason_val and str(late_reason_val).strip())
+            )
+            late_status_val = (
+                cr.get("lateReasonStatus")
+                or cr.get("late_reason_status")
+                or ("SUBMITTED" if (late_reason_val and str(late_reason_val).strip()) else ("PENDING" if is_late_val else "NOT_REQUIRED"))
+            )
+            submitted_at_val = cr.get("lateReasonSubmittedAt") or cr.get("late_reason_submitted_at") or None
 
             if real_key not in merged and key not in merged:
                 real_name = emp.get("name") or emp.get("fullName") or emp.get("full_name") or cr.get("name") or "Employee"
@@ -432,8 +481,14 @@ def get_attendance_records(
                     "check_in_timestamp": cr.get("checkIn") or cr.get("check_in_timestamp") or cr.get("check_in_time"),
                     "check_out_timestamp": cr.get("checkOut") or cr.get("check_out_timestamp") or cr.get("check_out_time"),
                     "work_mode": cr.get("workMode") or cr.get("work_mode") or "WFO",
-                    "status": cr.get("status", "Present"),
-                    "is_late": bool(cr.get("lateLogin") or cr.get("is_late")),
+                    "status": cr.get("status") or ("Late" if is_late_val else "Present"),
+                    "is_late": is_late_val,
+                    "late_reason": late_reason_val,
+                    "lateReason": late_reason_val,
+                    "late_reason_status": late_status_val,
+                    "lateReasonStatus": late_status_val,
+                    "late_reason_submitted_at": submitted_at_val,
+                    "lateReasonSubmittedAt": submitted_at_val,
                     "check_in_photo_url": cr.get("checkInPhotoUrl") or cr.get("photoUrl"),
                     "checkInPhotoUrl": cr.get("checkInPhotoUrl") or cr.get("photoUrl"),
                     "hasCheckInPhoto": bool(cr.get("checkInPhotoUrl") or cr.get("photoCaptured")),
@@ -450,6 +505,15 @@ def get_attendance_records(
                     merged[target_key]["check_out_timestamp"] = cr["checkOut"]
                 if cr.get("duration") and cr.get("duration") != "--":
                     merged[target_key]["duration"] = cr.get("duration")
+                if late_reason_val and not merged[target_key].get("lateReason") and not merged[target_key].get("late_reason"):
+                    merged[target_key]["late_reason"] = late_reason_val
+                    merged[target_key]["lateReason"] = late_reason_val
+                    merged[target_key]["late_reason_status"] = late_status_val
+                    merged[target_key]["lateReasonStatus"] = late_status_val
+                if is_late_val and not merged[target_key].get("is_late"):
+                    merged[target_key]["is_late"] = True
+                    if str(merged[target_key].get("status", "")).lower() == "present":
+                        merged[target_key]["status"] = "Late"
 
         records = list(merged.values())
 
@@ -467,22 +531,24 @@ def get_attendance_records(
             )
             emp_dept = r.get("department") or emp.get("department") or ""
 
-            if search:
-                s = search.strip().lower()
+            if search_str:
+                s = search_str.strip().lower()
                 if not (s in emp_name.lower() or s in str(emp_id).lower() or s in emp_dept.lower()):
                     continue
 
-            if workMode and workMode not in ["ALL", "All Modes", "All"]:
-                if str(r.get("work_mode", "")).strip().upper() != workMode.strip().upper():
+            if work_mode_str and work_mode_str not in ["ALL", "All Modes", "All"]:
+                if str(r.get("work_mode", "")).strip().upper() != work_mode_str.strip().upper():
                     continue
 
-            if status_filter and status_filter.upper() != "ALL":
-                if str(r.get("status", "")).strip().lower() != status_filter.strip().lower():
+            if status_filter_str and status_filter_str.upper() != "ALL":
+                if str(r.get("status", "")).strip().lower() != status_filter_str.strip().lower():
                     continue
 
-            if record_date:
-                if str(r.get("date", "")).strip() != record_date.strip():
-                    continue
+            rec_dt = str(r.get("date", "")).strip()
+            if effective_start and rec_dt < effective_start:
+                continue
+            if effective_end and rec_dt > effective_end:
+                continue
 
             filtered.append(format_attendance_response(r, emp))
 
@@ -504,10 +570,16 @@ def get_attendance_records(
         query = query.filter(Attendance.work_mode == workMode.strip())
     if status_filter and status_filter.upper() != "ALL":
         query = query.filter(Attendance.status.ilike(status_filter.strip()))
-    if record_date:
+    if effective_start:
         try:
-            d = date.fromisoformat(record_date)
-            query = query.filter(Attendance.date == d)
+            d_start = date.fromisoformat(effective_start)
+            query = query.filter(Attendance.date >= d_start)
+        except ValueError:
+            pass
+    if effective_end:
+        try:
+            d_end = date.fromisoformat(effective_end)
+            query = query.filter(Attendance.date <= d_end)
         except ValueError:
             pass
 
@@ -544,6 +616,20 @@ def get_my_attendance_history(
             c_eid = str(cr.get("employeeId") or cr.get("employee_id") or cr.get("uid") or "")
             if c_eid in [str(emp_id), str(emp_uid)]:
                 dt = str(cr.get("date", "")).strip()
+                late_reason_val = cr.get("lateReason") or cr.get("late_reason") or cr.get("reason") or None
+                is_late_val = bool(
+                    cr.get("lateLogin")
+                    or cr.get("is_late")
+                    or (str(cr.get("status", "")).lower() == "late")
+                    or (late_reason_val and str(late_reason_val).strip())
+                )
+                late_status_val = (
+                    cr.get("lateReasonStatus")
+                    or cr.get("late_reason_status")
+                    or ("SUBMITTED" if (late_reason_val and str(late_reason_val).strip()) else ("PENDING" if is_late_val else "NOT_REQUIRED"))
+                )
+                submitted_at_val = cr.get("lateReasonSubmittedAt") or cr.get("late_reason_submitted_at") or None
+
                 if dt not in merged:
                     merged[dt] = {
                         "id": f"{emp_id}_{dt}",
@@ -556,8 +642,14 @@ def get_my_attendance_history(
                         "check_in_timestamp": cr.get("checkIn") or cr.get("check_in_timestamp") or cr.get("check_in_time"),
                         "check_out_timestamp": cr.get("checkOut") or cr.get("check_out_timestamp") or cr.get("check_out_time"),
                         "work_mode": cr.get("workMode") or cr.get("work_mode") or "WFO",
-                        "status": cr.get("status", "Present"),
-                        "is_late": bool(cr.get("lateLogin") or cr.get("is_late")),
+                        "status": cr.get("status") or ("Late" if is_late_val else "Present"),
+                        "is_late": is_late_val,
+                        "late_reason": late_reason_val,
+                        "lateReason": late_reason_val,
+                        "late_reason_status": late_status_val,
+                        "lateReasonStatus": late_status_val,
+                        "late_reason_submitted_at": submitted_at_val,
+                        "lateReasonSubmittedAt": submitted_at_val,
                         "check_in_photo_url": cr.get("checkInPhotoUrl"),
                         "checkInPhotoUrl": cr.get("checkInPhotoUrl"),
                         "hasCheckInPhoto": bool(cr.get("checkInPhotoUrl") or cr.get("photoCaptured")),
@@ -570,6 +662,11 @@ def get_my_attendance_history(
                         merged[dt]["status"] = "Completed"
                     if cr.get("duration") and cr.get("duration") != "--":
                         merged[dt]["duration"] = cr["duration"]
+                    if late_reason_val and not merged[dt].get("lateReason") and not merged[dt].get("late_reason"):
+                        merged[dt]["late_reason"] = late_reason_val
+                        merged[dt]["lateReason"] = late_reason_val
+                        merged[dt]["late_reason_status"] = late_status_val
+                        merged[dt]["lateReasonStatus"] = late_status_val
 
         records = list(merged.values())
         filtered = []
@@ -2374,39 +2471,59 @@ def update_attendance_record(
 @router.get("/summary")
 def get_attendance_summary(
     record_date: Optional[str] = Query(None, alias="date"),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    from_date: Optional[str] = Query(None),
+    to_date: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """Get headline attendance summary metrics for today or a specific date."""
+    """Get headline attendance summary metrics for today, a specific date, or a date range."""
     today = get_attendance_today()
-    target_date_iso = (record_date or "").strip() or today.isoformat()
+    s_date = start_date if isinstance(start_date, str) else None
+    e_date = end_date if isinstance(end_date, str) else None
+    f_date = from_date if isinstance(from_date, str) else None
+    t_date = to_date if isinstance(to_date, str) else None
+    r_date = record_date if isinstance(record_date, str) else None
 
-    if settings.DATABASE_BACKEND == "firebase":
-        from app.services.attendance_service import get_daily_attendance_metrics
-        metrics = get_daily_attendance_metrics(target_date_iso)
-        return {
-            "date": target_date_iso,
-            "totalPresent": metrics.get("totalPresent", 0),
-            "wfo": metrics.get("wfo", 0),
-            "wfh": metrics.get("wfh", 0),
-            "late": metrics.get("late", 0),
-        }
+    eff_start = (s_date or f_date or "").strip()
+    eff_end = (e_date or t_date or "").strip()
+    if r_date and not eff_start and not eff_end:
+        eff_start = r_date.strip()
+        eff_end = r_date.strip()
+    if not eff_start and not eff_end:
+        eff_start = today.isoformat()
+        eff_end = today.isoformat()
 
-    # PostgreSQL fallback
-    try:
-        target_date = datetime.strptime(target_date_iso, "%Y-%m-%d").date()
-    except Exception:
-        target_date = today
+    # Re-use get_attendance_records to obtain exact filtered dataset across providers
+    filtered_records = get_attendance_records(
+        search=None,
+        workMode=None,
+        status_filter=None,
+        record_date=None,
+        start_date=eff_start,
+        end_date=eff_end,
+        from_date=None,
+        to_date=None,
+        db=db,
+        current_user=current_user,
+    )
 
-    records = db.query(Attendance).filter(Attendance.date == target_date).all()
-    total_present = len([r for r in records if r.status in ["Present", "Late", "Completed"]])
-    wfo = len([r for r in records if r.work_mode == "WFO" and r.status in ["Present", "Late", "Completed"]])
-    wfh = len([r for r in records if r.work_mode == "WFH" and r.status in ["Present", "Late", "Completed"]])
-    late = len([r for r in records if r.is_late or r.status == "Late"])
+    total_att = len(filtered_records)
+    wfo_count = sum(1 for r in filtered_records if str(r.get("workMode", "")).upper() == "WFO")
+    wfh_count = sum(1 for r in filtered_records if str(r.get("workMode", "")).upper() == "WFH")
+    late_count = sum(1 for r in filtered_records if bool(r.get("isLate")) or str(r.get("status", "")).upper() == "LATE")
+    present_count = sum(1 for r in filtered_records if str(r.get("status", "")).upper() in ["PRESENT", "LATE", "COMPLETED"])
+    absent_count = sum(1 for r in filtered_records if str(r.get("status", "")).upper() == "ABSENT")
 
     return {
-        "totalPresent": total_present,
-        "wfo": wfo,
-        "wfh": wfh,
-        "late": late,
+        "startDate": eff_start,
+        "endDate": eff_end,
+        "totalAttendance": total_att,
+        "wfo": wfo_count,
+        "wfh": wfh_count,
+        "late": late_count,
+        "present": present_count,
+        "absent": absent_count,
+        "totalPresent": present_count,
     }
