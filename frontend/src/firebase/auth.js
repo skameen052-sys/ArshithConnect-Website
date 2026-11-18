@@ -12,7 +12,7 @@ import { auth } from './firebaseConfig';
 export const loginWithFirebase = async (email, password) => {
   try {
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Firebase auth timeout')), 2500)
+      setTimeout(() => reject(new Error('Firebase auth timeout')), 12000)
     );
     const userCredential = await Promise.race([
       signInWithEmailAndPassword(auth, email.trim(), password),
@@ -22,10 +22,14 @@ export const loginWithFirebase = async (email, password) => {
     return {
       user: userCredential.user,
       token,
+      error: null,
     };
   } catch (err) {
-    // Graceful fallback to backend authentication
-    return null;
+    return {
+      user: null,
+      token: null,
+      error: err,
+    };
   }
 };
 

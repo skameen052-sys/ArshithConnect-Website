@@ -14,12 +14,30 @@ let refreshPromise = null;
 let redirectingToLogin = false;
 
 export function getApiBaseUrl() {
-  if (typeof window !== 'undefined') {
-    if (window.location.port === '8000' || !window.location.port) {
+  const envUrl = import.meta.env.VITE_API_BASE_URL;
+  const isBrowser = typeof window !== 'undefined';
+  const isLocalHost = isBrowser && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+  if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
+    const trimmed = envUrl.trim().replace(/\/+$/, '');
+    const isEnvLocal = trimmed.includes('localhost') || trimmed.includes('127.0.0.1');
+    // If we are in production on a real domain, ignore localhost/127.0.0.1 baked in from local .env
+    if (isBrowser && !isLocalHost && isEnvLocal) {
       return '';
     }
+    return trimmed;
   }
-  return import.meta.env.VITE_API_BASE_URL || '';
+
+  if (isBrowser) {
+    if (window.location.port === '8000') {
+      return '';
+    }
+    if (isLocalHost) {
+      return 'http://localhost:8000';
+    }
+  }
+
+  return '';
 }
 
 export function getLoginRouteForRole(role) {
@@ -114,25 +132,31 @@ export async function refreshAuthTokenIfPossible() {
         return null;
       }
 
-      const res = await axios.post(
-        `${getApiBaseUrl()}/api/auth/refresh`,
-        {
-          firebase_token: fbToken,
-          expected_role: storedRole || undefined,
-        },
-        { timeout: 10000 }
-      );
+      try {
+        const res = await axios.post(
+          `${getApiBaseUrl()}/api/auth/refresh`,
+          {
+            firebase_token: fbToken,
+            expected_role: storedRole || undefined,
+          },
+          { timeout: 10000 }
+        );
 
-      const { access_token, role, user } = res.data || {};
-      if (!access_token) {
-        return null;
+        const { access_token, role, user } = res.data || {};
+        if (access_token) {
+          localStorage.setItem('arshith_auth_token', access_token);
+          if (role) localStorage.setItem('arshith_role', role);
+          if (user) localStorage.setItem('arshith_user', JSON.stringify(user));
+          redirectingToLogin = false;
+          return access_token;
+        }
+      } catch {
+        // Backend unreachable or offline: fallback to fresh Firebase ID token
+        localStorage.setItem('arshith_auth_token', fbToken);
+        redirectingToLogin = false;
+        return fbToken;
       }
-
-      localStorage.setItem('arshith_auth_token', access_token);
-      if (role) localStorage.setItem('arshith_role', role);
-      if (user) localStorage.setItem('arshith_user', JSON.stringify(user));
-      redirectingToLogin = false;
-      return access_token;
+      return fbToken;
     } catch {
       return null;
     } finally {
