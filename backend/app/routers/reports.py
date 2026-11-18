@@ -160,33 +160,26 @@ def get_monthly_report(
     end_str = last_day.isoformat()
 
     month_records = []
-    seen_keys = set()
 
     try:
         cg_records = FirestoreService.collection_group("records")
         for r in cg_records:
             d_str = str(r.get("date", "")).strip()[:10]
             if start_str <= d_str <= end_str:
-                eid = r.get("employeeId") or r.get("employee_id") or r.get("uid") or ""
-                unique_k = f"{eid}_{d_str}"
-                if unique_k not in seen_keys:
-                    seen_keys.add(unique_k)
-                    month_records.append(r)
+                month_records.append(r)
     except Exception:
         pass
 
-    try:
-        top_records = FirestoreService.list_all("attendance")
-        for r in top_records:
-            d_str = str(r.get("date", "")).strip()[:10]
-            if start_str <= d_str <= end_str:
-                eid = r.get("employeeId") or r.get("employee_id") or r.get("uid") or ""
-                unique_k = f"{eid}_{d_str}"
-                if unique_k not in seen_keys:
-                    seen_keys.add(unique_k)
+    # Fall back to top-level attendance only if collection group has no records
+    if not month_records:
+        try:
+            top_records = FirestoreService.list_all("attendance")
+            for r in top_records:
+                d_str = str(r.get("date", "")).strip()[:10]
+                if start_str <= d_str <= end_str:
                     month_records.append(r)
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     # 6. Aggregate by Employee
     emp_reports = {}

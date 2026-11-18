@@ -55,3 +55,4 @@ if (fs.existsSync(indexHtmlPath)) {
 const redirectsPath = path.join(destDir, '_redirects');
 fs.writeFileSync(redirectsPath, '/*    /index.html   200\n', 'utf8');
 console.log('✓ Generated dist/_redirects');
+

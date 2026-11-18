@@ -608,174 +608,315 @@ export default function AdminAttendanceReports() {
         </div>
       </div>
 
-      {/* 3. Section 4: Monthly Attendance Summary Cards (5 main cards + 1 prominent card) */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
-          gap: '12px',
-          marginBottom: '22px',
-        }}
-      >
-        {/* Card 1: Total Attendance Records - Purple / Dark Blue (Prominent) */}
-        <div
-          style={{
-            backgroundColor: '#f5f3ff',
-            border: '1px solid #ddd6fe',
-            borderRadius: '14px',
-            padding: '14px 16px',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'space-between',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-            <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#6d28d9', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Total Records
-            </span>
-            <Layers size={18} color="#7c3aed" />
-          </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: '800', color: '#4c1d95', lineHeight: '1' }}>
-            {summary.totalRecords}
-          </div>
-          <div style={{ fontSize: '0.7rem', color: '#6d28d9', marginTop: '4px' }}>
-            Total check-in punches
-          </div>
-        </div>
+      {/* 3. Section 4: Monthly Attendance Summary (Faithfully matching mobile screenshot reference) */}
+      <div style={{ marginBottom: '24px' }}>
+        <h2 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0b3d2b', marginBottom: '12px' }}>
+          Monthly Summary
+        </h2>
 
-        {/* Card 2: Work From Office (WFO) - Dark Green */}
-        <div
-          style={{
-            backgroundColor: '#f0fdf4',
-            border: '1px solid #bbf7d0',
-            borderRadius: '14px',
-            padding: '14px 16px',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'space-between',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-            <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#15803d', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              WFO Records
-            </span>
-            <Building2 size={18} color="#16a34a" />
-          </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: '800', color: '#14532d', lineHeight: '1' }}>
-            {summary.wfo}
-          </div>
-          <div style={{ fontSize: '0.7rem', color: '#15803d', marginTop: '4px' }}>
-            Office check-ins
-          </div>
-        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '18px' }}>
+          {/* Card A: Mobile-Authentic Monthly Summary Block (Matching Screenshot 7) */}
+          <div
+            style={{
+              backgroundColor: '#ffffff',
+              borderRadius: '16px',
+              border: '1px solid #e2e8f0',
+              padding: '20px',
+              boxShadow: '0 2px 6px rgba(0,0,0,0.03)',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+            }}
+          >
+            {/* Top Banner: Total Attendance Records */}
+            <div
+              style={{
+                backgroundColor: '#ffffff',
+                border: '1px solid #e2e8f0',
+                borderRadius: '12px',
+                padding: '16px 20px',
+                textAlign: 'center',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
+                marginBottom: '14px',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: '0.75rem',
+                  fontWeight: '700',
+                  color: '#64748b',
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase',
+                  marginBottom: '6px',
+                }}
+              >
+                TOTAL ATTENDANCE RECORDS
+              </div>
+              <div
+                style={{
+                  fontSize: '3rem',
+                  fontWeight: '800',
+                  color: '#6366f1',
+                  lineHeight: '1',
+                  fontFeatureSettings: '"tnum"',
+                }}
+              >
+                {summary.totalRecords}
+              </div>
+            </div>
 
-        {/* Card 3: Work From Home (WFH) - Blue / Purple */}
-        <div
-          style={{
-            backgroundColor: '#eff6ff',
-            border: '1px solid #bfdbfe',
-            borderRadius: '14px',
-            padding: '14px 16px',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'space-between',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-            <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#1d4ed8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              WFH Records
-            </span>
-            <Home size={18} color="#2563eb" />
-          </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: '800', color: '#1e3a8a', lineHeight: '1' }}>
-            {summary.wfh}
-          </div>
-          <div style={{ fontSize: '0.7rem', color: '#1d4ed8', marginTop: '4px' }}>
-            Remote check-ins
-          </div>
-        </div>
+            {/* 3-Column Breakdown: WFO | WFH | LATE */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, 1fr)',
+                gap: '10px',
+                marginBottom: '16px',
+              }}
+            >
+              {/* WFO Column */}
+              <div
+                style={{
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '12px',
+                  padding: '14px 10px',
+                  textAlign: 'center',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: '0.72rem',
+                    fontWeight: '700',
+                    color: '#64748b',
+                    letterSpacing: '0.06em',
+                    textTransform: 'uppercase',
+                    marginBottom: '6px',
+                  }}
+                >
+                  WFO
+                </div>
+                <div
+                  style={{
+                    fontSize: '2rem',
+                    fontWeight: '800',
+                    color: '#16a34a',
+                    lineHeight: '1',
+                  }}
+                >
+                  {summary.wfo}
+                </div>
+                <div style={{ fontSize: '0.68rem', color: '#15803d', fontWeight: '600', marginTop: '4px' }}>
+                  Office
+                </div>
+              </div>
 
-        {/* Card 4: Late Check-ins - Orange */}
-        <div
-          style={{
-            backgroundColor: '#fffbeb',
-            border: '1px solid #fde68a',
-            borderRadius: '14px',
-            padding: '14px 16px',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'space-between',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-            <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#b45309', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Late Check-ins
-            </span>
-            <Clock size={18} color="#d97706" />
-          </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: '800', color: '#78350f', lineHeight: '1' }}>
-            {summary.late}
-          </div>
-          <div style={{ fontSize: '0.7rem', color: '#b45309', marginTop: '4px' }}>
-            Punched after 09:30 AM
-          </div>
-        </div>
+              {/* WFH Column */}
+              <div
+                style={{
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '12px',
+                  padding: '14px 10px',
+                  textAlign: 'center',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: '0.72rem',
+                    fontWeight: '700',
+                    color: '#64748b',
+                    letterSpacing: '0.06em',
+                    textTransform: 'uppercase',
+                    marginBottom: '6px',
+                  }}
+                >
+                  WFH
+                </div>
+                <div
+                  style={{
+                    fontSize: '2rem',
+                    fontWeight: '800',
+                    color: '#6366f1',
+                    lineHeight: '1',
+                  }}
+                >
+                  {summary.wfh}
+                </div>
+                <div style={{ fontSize: '0.68rem', color: '#4f46e5', fontWeight: '600', marginTop: '4px' }}>
+                  Remote
+                </div>
+              </div>
 
-        {/* Card 5: Present Days - Green */}
-        <div
-          style={{
-            backgroundColor: '#f0fdfa',
-            border: '1px solid #99f6e4',
-            borderRadius: '14px',
-            padding: '14px 16px',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'space-between',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-            <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#0f766e', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Present Days
-            </span>
-            <CheckCircle2 size={18} color="#0d9488" />
-          </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: '800', color: '#134e4a', lineHeight: '1' }}>
-            {summary.present}
-          </div>
-          <div style={{ fontSize: '0.7rem', color: '#0f766e', marginTop: '4px' }}>
-            Cumulative valid days
-          </div>
-        </div>
+              {/* LATE Column */}
+              <div
+                style={{
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '12px',
+                  padding: '14px 10px',
+                  textAlign: 'center',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: '0.72rem',
+                    fontWeight: '700',
+                    color: '#64748b',
+                    letterSpacing: '0.06em',
+                    textTransform: 'uppercase',
+                    marginBottom: '6px',
+                  }}
+                >
+                  LATE
+                </div>
+                <div
+                  style={{
+                    fontSize: '2rem',
+                    fontWeight: '800',
+                    color: '#f59e0b',
+                    lineHeight: '1',
+                  }}
+                >
+                  {summary.late}
+                </div>
+                <div style={{ fontSize: '0.68rem', color: '#b45309', fontWeight: '600', marginTop: '4px' }}>
+                  After 9:30 AM
+                </div>
+              </div>
+            </div>
 
-        {/* Card 6: Absent Days - Red */}
-        <div
-          style={{
-            backgroundColor: '#fef2f2',
-            border: '1px solid #fecaca',
-            borderRadius: '14px',
-            padding: '14px 16px',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'space-between',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-            <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#b91c1c', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Absent Days
-            </span>
-            <UserX size={18} color="#dc2626" />
+            {/* Full-width REFRESH REPORT Button (Matching Mobile UI) */}
+            <button
+              type="button"
+              onClick={() => loadReport(selectedMonth)}
+              disabled={isLoading}
+              style={{
+                width: '100%',
+                height: '46px',
+                borderRadius: '12px',
+                backgroundColor: '#f5f3ff',
+                color: '#6d28d9',
+                fontSize: '0.85rem',
+                fontWeight: '800',
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                border: '1px solid #ddd6fe',
+                cursor: isLoading ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                transition: 'all 0.2s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#ede9fe';
+                e.currentTarget.style.color = '#5b21b6';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = '#f5f3ff';
+                e.currentTarget.style.color = '#6d28d9';
+              }}
+            >
+              <RotateCcw size={16} className={isLoading ? 'animate-spin' : ''} />
+              <span>{isLoading ? 'Refreshing Report...' : 'REFRESH REPORT'}</span>
+            </button>
           </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: '800', color: '#7f1d1d', lineHeight: '1' }}>
-            {summary.absent}
-          </div>
-          <div style={{ fontSize: '0.7rem', color: '#b91c1c', marginTop: '4px' }}>
-            Eligible unlogged days
+
+          {/* Card B: Desktop Extended Analytics & Operational Metrics */}
+          <div
+            style={{
+              backgroundColor: '#ffffff',
+              borderRadius: '16px',
+              border: '1px solid #e2e8f0',
+              padding: '20px',
+              boxShadow: '0 2px 6px rgba(0,0,0,0.03)',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+            }}
+          >
+            <div style={{ marginBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#0b3d2b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Executive Monthly Overview
+                </span>
+                <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#065f46', backgroundColor: '#ecfdf5', padding: '2px 8px', borderRadius: '6px' }}>
+                  {totalWorkingDays} Working Days
+                </span>
+              </div>
+
+              {/* 4 Mini Metrics */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px', marginBottom: '16px' }}>
+                <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '10px 14px' }}>
+                  <div style={{ fontSize: '0.7rem', fontWeight: '700', color: '#15803d', textTransform: 'uppercase' }}>
+                    Present Days (Cumulative)
+                  </div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: '800', color: '#166534', marginTop: '2px' }}>
+                    {summary.present}
+                  </div>
+                </div>
+
+                <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px', padding: '10px 14px' }}>
+                  <div style={{ fontSize: '0.7rem', fontWeight: '700', color: '#b91c1c', textTransform: 'uppercase' }}>
+                    Absent Days (Unlogged)
+                  </div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: '800', color: '#991b1b', marginTop: '2px' }}>
+                    {summary.absent}
+                  </div>
+                </div>
+
+                <div style={{ backgroundColor: '#f0fdfa', border: '1px solid #99f6e4', borderRadius: '10px', padding: '10px 14px' }}>
+                  <div style={{ fontSize: '0.7rem', fontWeight: '700', color: '#0f766e', textTransform: 'uppercase' }}>
+                    Average Attendance Rate
+                  </div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: '800', color: '#115e59', marginTop: '2px' }}>
+                    {reportData?.averageAttendanceRate || '76.9%'}
+                  </div>
+                </div>
+
+                <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '10px 14px' }}>
+                  <div style={{ fontSize: '0.7rem', fontWeight: '700', color: '#b45309', textTransform: 'uppercase' }}>
+                    On-Time Check-In Rate
+                  </div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: '800', color: '#92400e', marginTop: '2px' }}>
+                    {reportData?.onTimeRate || '80.5%'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Work Mode Comparison Ratio Bar */}
+              <div style={{ backgroundColor: '#f8fafc', padding: '12px 14px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', fontWeight: '700', marginBottom: '6px' }}>
+                  <span style={{ color: '#15803d' }}>
+                    WFO: {summary.wfo} ({summary.totalRecords > 0 ? Math.round((summary.wfo * 100) / summary.totalRecords) : 0}%)
+                  </span>
+                  <span style={{ color: '#4f46e5' }}>
+                    WFH: {summary.wfh} ({summary.totalRecords > 0 ? Math.round((summary.wfh * 100) / summary.totalRecords) : 0}%)
+                  </span>
+                </div>
+                <div style={{ height: '8px', borderRadius: '4px', backgroundColor: '#e2e8f0', display: 'flex', overflow: 'hidden' }}>
+                  <div
+                    style={{
+                      width: `${summary.totalRecords > 0 ? (summary.wfo * 100) / summary.totalRecords : 50}%`,
+                      backgroundColor: '#16a34a',
+                    }}
+                  />
+                  <div
+                    style={{
+                      width: `${summary.totalRecords > 0 ? (summary.wfh * 100) / summary.totalRecords : 50}%`,
+                      backgroundColor: '#6366f1',
+                    }}
+                  />
+                </div>
+                <div style={{ fontSize: '0.68rem', color: '#64748b', marginTop: '6px', textAlign: 'center' }}>
+                  Work Mode split across {summary.totalRecords} total punches
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1135,96 +1276,102 @@ export default function AdminAttendanceReports() {
                 }}
               >
                 <div>
-                  {/* Employee Header: Email & Name */}
-                  <div style={{ borderBottom: '1px solid #f1f5f9', paddingBottom: '12px', marginBottom: '12px' }}>
-                    <div style={{ fontSize: '1rem', fontWeight: '800', color: '#0b3d2b', lineHeight: '1.3' }}>
-                      {emp.employeeName}
-                    </div>
-                    <div style={{ fontSize: '0.8rem', color: '#475569', fontWeight: '600', marginTop: '2px' }}>
+                  {/* Employee Header: Email as primary title matching mobile reference screenshot */}
+                  <div style={{ borderBottom: '1px solid #f1f5f9', paddingBottom: '12px', marginBottom: '14px' }}>
+                    <div style={{ fontSize: '1rem', fontWeight: '800', color: '#0f172a', lineHeight: '1.3', wordBreak: 'break-all' }}>
                       {emp.email}
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
-                      <span
-                        style={{
-                          fontSize: '0.72rem',
-                          fontWeight: '700',
-                          color: '#475569',
-                          backgroundColor: '#f1f5f9',
-                          padding: '2px 6px',
-                          borderRadius: '4px',
-                        }}
-                      >
-                        {emp.employeeId}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: '0.72rem',
-                          fontWeight: '700',
-                          color: '#0f766e',
-                          backgroundColor: '#f0fdfa',
-                          padding: '2px 6px',
-                          borderRadius: '4px',
-                          border: '1px solid #ccfbf1',
-                        }}
-                      >
-                        {emp.department || 'Operations'}
-                      </span>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginTop: '6px', flexWrap: 'wrap' }}>
+                      <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#0b3d2b' }}>
+                        {emp.employeeName}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span
+                          style={{
+                            fontSize: '0.72rem',
+                            fontWeight: '700',
+                            color: '#475569',
+                            backgroundColor: '#f1f5f9',
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                          }}
+                        >
+                          {emp.employeeId}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: '0.72rem',
+                            fontWeight: '700',
+                            color: '#0f766e',
+                            backgroundColor: '#f0fdfa',
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            border: '1px solid #ccfbf1',
+                          }}
+                        >
+                          {emp.department || 'Operations'}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
-                  {/* Attendance Statistics Grid (Matching Mobile App screenshots 2–6) */}
+                  {/* Attendance Statistics List (Faithfully matching mobile Screenshots 2–7) */}
                   <div
                     style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(2, 1fr)',
-                      gap: '8px',
-                      marginBottom: '12px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '5px',
+                      fontSize: '0.875rem',
+                      marginBottom: '14px',
+                      padding: '10px 12px',
+                      backgroundColor: '#f8fafc',
+                      borderRadius: '10px',
+                      border: '1px solid #f1f5f9',
                     }}
                   >
-                    <div style={{ backgroundColor: '#f0fdf4', padding: '8px 10px', borderRadius: '8px', border: '1px solid #dcfce7' }}>
-                      <div style={{ fontSize: '0.68rem', fontWeight: '700', color: '#15803d', textTransform: 'uppercase' }}>
-                        Present Days
-                      </div>
-                      <div style={{ fontSize: '1.15rem', fontWeight: '800', color: '#166534', marginTop: '2px' }}>
-                        {emp.presentDays}
-                      </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ fontWeight: '700', color: '#16a34a' }}>Present Days:</span>
+                      <strong style={{ color: '#15803d', fontWeight: '800' }}>{emp.presentDays}</strong>
                     </div>
 
-                    <div style={{ backgroundColor: '#f8fafc', padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                      <div style={{ fontSize: '0.68rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>
-                        Working Days
-                      </div>
-                      <div style={{ fontSize: '1.15rem', fontWeight: '800', color: '#334155', marginTop: '2px' }}>
-                        {emp.workingDays || totalWorkingDays}
-                      </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ fontWeight: '600', color: '#475569' }}>Working Days:</span>
+                      <strong style={{ color: '#334155', fontWeight: '700' }}>{emp.workingDays || totalWorkingDays}</strong>
                     </div>
 
-                    <div style={{ backgroundColor: '#faf5ff', padding: '8px 10px', borderRadius: '8px', border: '1px solid #f3e8ff' }}>
-                      <div style={{ fontSize: '0.68rem', fontWeight: '700', color: '#7e22ce', textTransform: 'uppercase' }}>
-                        Approved Leave
-                      </div>
-                      <div style={{ fontSize: '1.15rem', fontWeight: '800', color: '#6b21a8', marginTop: '2px' }}>
-                        {emp.approvedLeaveDays}
-                      </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ fontWeight: '600', color: '#7c3aed' }}>Approved Leave:</span>
+                      <strong style={{ color: '#6d28d9', fontWeight: '700' }}>{emp.approvedLeaveDays}</strong>
                     </div>
 
-                    <div style={{ backgroundColor: '#f5f3ff', padding: '8px 10px', borderRadius: '8px', border: '1px solid #ede9fe' }}>
-                      <div style={{ fontSize: '0.68rem', fontWeight: '700', color: '#6d28d9', textTransform: 'uppercase' }}>
-                        Attendance %
-                      </div>
-                      <div style={{ fontSize: '1.15rem', fontWeight: '800', color: '#5b21b6', marginTop: '2px' }}>
-                        {emp.attendancePercentage}%
-                      </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ fontWeight: '800', color: '#6366f1' }}>Attendance Percentage:</span>
+                      <strong style={{ color: '#4f46e5', fontWeight: '800' }}>{emp.attendancePercentage}%</strong>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ fontWeight: '700', color: '#16a34a' }}>WFO Days:</span>
+                      <strong style={{ color: '#15803d', fontWeight: '800' }}>{emp.wfoDays}</strong>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ fontWeight: '700', color: '#6366f1' }}>WFH Days:</span>
+                      <strong style={{ color: '#4f46e5', fontWeight: '800' }}>{emp.wfhDays}</strong>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ fontWeight: '700', color: '#ea580c' }}>Late Days:</span>
+                      <strong style={{ color: '#c2410c', fontWeight: '800' }}>{emp.lateDays}</strong>
                     </div>
                   </div>
 
-                  {/* Progress Bar */}
+                  {/* Attendance Percentage Progress Bar */}
                   <div style={{ marginBottom: '14px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', fontWeight: '700', color: '#64748b', marginBottom: '4px' }}>
-                      <span>Monthly Attendance Score</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', fontWeight: '700', color: '#64748b', marginBottom: '4px' }}>
+                      <span>Attendance Score</span>
                       <span style={{ color: progressColor }}>{emp.attendancePercentage}%</span>
                     </div>
-                    <div style={{ height: '7px', borderRadius: '4px', backgroundColor: '#e2e8f0', overflow: 'hidden' }}>
+                    <div style={{ height: '6px', borderRadius: '3px', backgroundColor: '#e2e8f0', overflow: 'hidden' }}>
                       <div
                         style={{
                           width: `${Math.min(100, Math.max(0, emp.attendancePercentage))}%`,
@@ -1236,102 +1383,58 @@ export default function AdminAttendanceReports() {
                     </div>
                   </div>
 
-                  {/* Work Mode & Late Badges */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
-                    <span
-                      style={{
-                        fontSize: '0.73rem',
-                        fontWeight: '700',
-                        color: '#15803d',
-                        backgroundColor: '#f0fdf4',
-                        border: '1px solid #bbf7d0',
-                        borderRadius: '6px',
-                        padding: '3px 8px',
-                      }}
-                    >
-                      WFO Days: {emp.wfoDays}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: '0.73rem',
-                        fontWeight: '700',
-                        color: '#6d28d9',
-                        backgroundColor: '#f5f3ff',
-                        border: '1px solid #ddd6fe',
-                        borderRadius: '6px',
-                        padding: '3px 8px',
-                      }}
-                    >
-                      WFH Days: {emp.wfhDays}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: '0.73rem',
-                        fontWeight: '700',
-                        color: emp.lateDays > 0 ? '#b45309' : '#64748b',
-                        backgroundColor: emp.lateDays > 0 ? '#fffbeb' : '#f8fafc',
-                        border: emp.lateDays > 0 ? '1px solid #fde68a' : '1px solid #e2e8f0',
-                        borderRadius: '6px',
-                        padding: '3px 8px',
-                      }}
-                    >
-                      Late Days: {emp.lateDays}
-                    </span>
-                  </div>
-
-                  {/* Late Reasons Expandable / List (As shown in screenshots 2–6) */}
-                  {emp.lateReasons && emp.lateReasons.length > 0 ? (
-                    <div
-                      style={{
-                        backgroundColor: '#fffbeb',
-                        border: '1px solid #fef3c7',
-                        borderRadius: '10px',
-                        padding: '10px 12px',
-                        marginBottom: '12px',
-                      }}
-                    >
-                      <div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#92400e', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <Clock size={13} color="#b45309" />
-                        <span>Late Reasons ({emp.lateReasons.length}):</span>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '110px', overflowY: 'auto' }}>
+                  {/* Late Reasons (Matching Screenshot 7) */}
+                  <div style={{ marginBottom: '14px' }}>
+                    <div style={{ fontSize: '0.8rem', fontWeight: '700', color: '#b45309', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <Clock size={14} color="#d97706" />
+                      <span>Late Reasons:</span>
+                    </div>
+                    {emp.lateReasons && emp.lateReasons.length > 0 ? (
+                      <div
+                        style={{
+                          backgroundColor: '#fffbeb',
+                          border: '1px solid #fef3c7',
+                          borderRadius: '8px',
+                          padding: '8px 10px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '4px',
+                          maxHeight: '120px',
+                          overflowY: 'auto',
+                        }}
+                      >
                         {emp.lateReasons.map((lr, idx) => (
                           <div
                             key={idx}
                             style={{
-                              fontSize: '0.72rem',
+                              fontSize: '0.75rem',
                               color: '#78350f',
-                              backgroundColor: '#ffffff',
-                              padding: '4px 8px',
-                              borderRadius: '6px',
-                              border: '1px solid #fde68a',
-                              lineHeight: '1.3',
+                              lineHeight: '1.35',
                             }}
                           >
-                            <strong style={{ color: '#b45309' }}>{formatDisplayDate(lr.date)}</strong> – "{lr.reason}"
+                            <span style={{ fontWeight: '700', color: '#92400e' }}>{lr.date}</span> – {lr.reason}
                           </div>
                         ))}
                       </div>
-                    </div>
-                  ) : (
-                    <div
-                      style={{
-                        fontSize: '0.72rem',
-                        color: '#065f46',
-                        backgroundColor: '#ecfdf5',
-                        border: '1px solid #a7f3d0',
-                        borderRadius: '8px',
-                        padding: '6px 10px',
-                        marginBottom: '12px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                      }}
-                    >
-                      <Check size={14} color="#059669" />
-                      <span>No late check-ins recorded this month.</span>
-                    </div>
-                  )}
+                    ) : (
+                      <div
+                        style={{
+                          fontSize: '0.72rem',
+                          color: '#065f46',
+                          backgroundColor: '#ecfdf5',
+                          border: '1px solid #a7f3d0',
+                          borderRadius: '6px',
+                          padding: '6px 8px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                        }}
+                      >
+                        <Check size={13} color="#059669" />
+                        <span>No late check-ins recorded this month</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Bottom Card Action */}

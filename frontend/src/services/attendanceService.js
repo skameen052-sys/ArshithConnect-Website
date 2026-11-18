@@ -29,51 +29,34 @@ export const attendanceService = {
         console.warn('[AttendanceService] Could not pre-fetch employees map from Firestore:', e);
       }
 
-      // 2. Fetch top-level attendance collection
-      const rawRecordsMap = new Map();
-      try {
-        const attSnap = await getDocs(collection(db, 'attendance'));
-        attSnap.forEach((d) => {
-          const data = d.data();
-          const eid = data.employee_id || data.employeeId || data.employee_uid || data.employeeUid || d.id;
-          const dt = String(data.date || '').slice(0, 10);
-          const key = `${eid}_${dt}`;
-          rawRecordsMap.set(key, { id: d.id, ...data });
-        });
-      } catch (e) {
-        console.warn('[AttendanceService] Could not fetch top-level attendance:', e);
-      }
-
-      // 3. Fetch collectionGroup('records') where mobile check-ins and late reasons are stored
+      // 2. Fetch collectionGroup('records') where mobile check-ins and late reasons are authored
+      const cgRecords = [];
       try {
         const cgSnap = await getDocs(collectionGroup(db, 'records'));
         cgSnap.forEach((d) => {
           const cData = d.data();
-          const parentDoc = d.ref.parent.parent;
+          const parentDoc = d.ref.parent ? d.ref.parent.parent : null;
           const parentUid = parentDoc ? parentDoc.id : '';
           const eid = cData.employeeId || cData.employee_id || cData.uid || parentUid;
           const emp = empMap[eid] || empMap[parentUid] || {};
           const realEmpId = emp.employeeId || emp.employee_id || eid;
           const dt = String(cData.date || d.id || '').slice(0, 10);
-          const key = `${realEmpId}_${dt}`;
 
-          const existing = rawRecordsMap.get(key) || rawRecordsMap.get(`${eid}_${dt}`) || {};
-          const lateReasonStr = cData.lateReason || cData.late_reason || cData.reason || existing.lateReason || existing.late_reason || null;
+          const lateReasonStr = cData.lateReason || cData.late_reason || cData.reason || null;
           const isLateFlag = Boolean(
             cData.lateLogin ||
             cData.is_late ||
             cData.isLate ||
             (cData.status || '').toLowerCase() === 'late' ||
-            existing.isLate ||
-            existing.is_late ||
-            lateReasonStr
+            (lateReasonStr && String(lateReasonStr).trim())
           );
 
-          rawRecordsMap.set(key, {
+          cgRecords.push({
             id: d.id,
             employeeUid: parentUid,
-            ...existing,
+            employeeId: realEmpId,
             ...cData,
+            date: dt,
             lateReason: lateReasonStr,
             isLate: isLateFlag,
           });
@@ -82,7 +65,27 @@ export const attendanceService = {
         console.warn('[AttendanceService] Could not fetch collectionGroup records:', e);
       }
 
-      const rawRecords = Array.from(rawRecordsMap.values());
+      let rawRecords = cgRecords;
+
+      // Fallback to top-level attendance only if collectionGroup('records') is completely empty
+      if (rawRecords.length === 0) {
+        try {
+          const attSnap = await getDocs(collection(db, 'attendance'));
+          attSnap.forEach((d) => {
+            const data = d.data();
+            const eid = data.employee_id || data.employeeId || data.employee_uid || data.employeeUid || d.id;
+            const dt = String(data.date || '').slice(0, 10);
+            rawRecords.push({
+              id: d.id,
+              employeeId: eid,
+              ...data,
+              date: dt,
+            });
+          });
+        } catch (e) {
+          console.warn('[AttendanceService] Could not fetch top-level attendance:', e);
+        }
+      }
 
       // 4. Format and enrich records
       const formatted = rawRecords.map((r) => {
