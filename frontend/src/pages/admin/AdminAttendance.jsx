@@ -13,7 +13,6 @@ import {
   AlertCircle,
   UserX,
   RotateCcw,
-  Download,
   FileSpreadsheet,
   ChevronLeft,
   ChevronRight,
@@ -503,75 +502,6 @@ export default function AdminAttendance() {
     XLSX.writeFile(wb, `Arshith_Attendance_Report_${reportDateLabel}.xlsx`);
   };
 
-  // CSV Export with UTF-8 BOM for accurate character encoding and date formatting
-  const handleExportCSV = () => {
-    if (!filteredRecords.length) return;
-    const isRange = appliedFilter.mode === 'RANGE';
-    const reportDateLabel = isRange
-      ? `${formatDisplayDate(appliedFilter.fromDate)}_to_${formatDisplayDate(appliedFilter.toDate)}`
-      : formatDisplayDate(appliedFilter.singleDate);
-
-    const headers = [
-      'S.No',
-      'Attendance Date',
-      'Employee ID',
-      'Employee Name',
-      'Department',
-      'Work Mode',
-      'Check In',
-      'Check Out',
-      'Duration',
-      'Status',
-      'Late Reason',
-      'Latitude',
-      'Longitude',
-    ];
-
-    const rows = filteredRecords.map((r, index) => {
-      const isLate =
-        r.isLate ||
-        (r.status || '').toUpperCase() === 'LATE' ||
-        Boolean(r.lateReason && String(r.lateReason).trim());
-      const displayStatus = isLate ? 'Late' : (r.status || 'Present');
-      const lateReasonText =
-        r.lateReason && String(r.lateReason).trim()
-          ? String(r.lateReason).trim()
-          : isLate
-          ? 'Reason Pending'
-          : '--';
-
-      return [
-        index + 1,
-        `"${formatDisplayDate(r.date)}"`,
-        `"${r.employeeId || ''}"`,
-        `"${(r.employeeName || '').replace(/"/g, '""')}"`,
-        `"${r.department || 'Operations'}"`,
-        `"${r.workMode || 'WFO'}"`,
-        `"${r.checkIn || '--'}"`,
-        `"${r.checkOut || '--'}"`,
-        `"${r.duration || '--'}"`,
-        `"${displayStatus}"`,
-        `"${lateReasonText.replace(/"/g, '""')}"`,
-        r.checkInLatitude ?? '',
-        r.checkInLongitude ?? '',
-      ];
-    });
-
-    // \uFEFF ensures Excel treats CSV as UTF-8
-    const csvContent =
-      '\uFEFF' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `Arshith_Attendance_Report_${reportDateLabel}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  };
-
   return (
     <div className="attendance-management-view animate-fade-in" style={{ paddingBottom: '32px' }}>
       {/* 1. Header with Breadcrumbs & Export Action */}
@@ -589,51 +519,27 @@ export default function AdminAttendance() {
               className="btn-export-excel"
               onClick={handleExportExcel}
               disabled={filteredRecords.length === 0}
-              title="Download formatted Excel (.xlsx) report with auto-fitted columns and summaries"
+              title="Download Attendance Report in Excel (.xlsx) with auto-fitted columns and summaries"
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '6px',
                 height: '38px',
-                padding: '0 14px',
-                borderRadius: '10px',
-                backgroundColor: '#0b3d2b',
-                color: '#ffffff',
-                fontSize: '0.825rem',
-                fontWeight: '600',
-                border: 'none',
-                cursor: filteredRecords.length === 0 ? 'not-allowed' : 'pointer',
-                opacity: filteredRecords.length === 0 ? 0.6 : 1,
-                boxShadow: '0 1px 3px rgba(11, 61, 43, 0.25)',
-              }}
-            >
-              <FileSpreadsheet size={16} />
-              <span>Export Excel (.xlsx)</span>
-            </button>
-            <button
-              type="button"
-              className="btn-export-csv"
-              onClick={handleExportCSV}
-              disabled={filteredRecords.length === 0}
-              title="Download standard CSV report"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                height: '38px',
-                padding: '0 12px',
+                padding: '0 16px',
                 borderRadius: '10px',
                 backgroundColor: '#f0fdf4',
-                color: '#166534',
-                fontSize: '0.825rem',
+                color: '#0b3d2b',
+                fontSize: '0.85rem',
                 fontWeight: '600',
                 border: '1px solid #bbf7d0',
                 cursor: filteredRecords.length === 0 ? 'not-allowed' : 'pointer',
                 opacity: filteredRecords.length === 0 ? 0.6 : 1,
+                boxShadow: '0 1px 2px rgba(11, 61, 43, 0.05)',
+                transition: 'all 0.15s ease',
               }}
             >
-              <Download size={15} />
-              <span>Export CSV</span>
+              <FileSpreadsheet size={16} color="#0b3d2b" />
+              <span>Export Excel</span>
             </button>
             <button
               type="button"
