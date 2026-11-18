@@ -1,5 +1,6 @@
 import api from './api';
 import { chatService } from './chatService';
+import { loginWithFirebase } from '../firebase/auth';
 
 /**
  * AuthService - Handles Employee & Admin Authentication
@@ -13,7 +14,6 @@ export const authService = {
   async login({ email, password }) {
     try {
       try {
-        const { loginWithFirebase } = await import('../firebase/auth');
         await loginWithFirebase(email, password);
       } catch (fbErr) {
         // Firebase client sign-in note (backend is authoritative)
@@ -59,7 +59,6 @@ export const authService = {
   async adminLogin({ email, password }) {
     try {
       try {
-        const { loginWithFirebase } = await import('../firebase/auth');
         await loginWithFirebase(email, password);
       } catch (fbErr) {
         // Firebase client sign-in note (backend is authoritative)
