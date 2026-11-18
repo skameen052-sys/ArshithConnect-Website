@@ -14,6 +14,7 @@ import {
   UserX,
   RotateCcw,
   Download,
+  FileSpreadsheet,
   ChevronLeft,
   ChevronRight,
   Layers,
@@ -21,6 +22,7 @@ import {
   ExternalLink,
   Check,
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import PageHeader from '../../components/common/PageHeader';
 import EmptyState from '../../components/common/EmptyState';
 import Modal from '../../components/common/Modal';
@@ -370,18 +372,151 @@ export default function AdminAttendance() {
     }
   };
 
-  // CSV Export for filtered attendance report
+  // Formatted Excel (.xlsx) Export with Auto-Fitted Columns & Summary Sheets
+  const handleExportExcel = () => {
+    if (!filteredRecords.length) return;
+    const isRange = appliedFilter.mode === 'RANGE';
+    const reportDateLabel = isRange
+      ? `${formatDisplayDate(appliedFilter.fromDate)}_to_${formatDisplayDate(appliedFilter.toDate)}`
+      : formatDisplayDate(appliedFilter.singleDate);
+
+    // 1. Sheet 1: Detailed Attendance Logs
+    const attendanceData = filteredRecords.map((r, index) => {
+      const isLate =
+        r.isLate ||
+        (r.status || '').toUpperCase() === 'LATE' ||
+        Boolean(r.lateReason && String(r.lateReason).trim());
+      const displayStatus = isLate ? 'Late' : (r.status || 'Present');
+      const lateReasonText =
+        r.lateReason && String(r.lateReason).trim()
+          ? String(r.lateReason).trim()
+          : isLate
+          ? 'Reason Pending'
+          : '--';
+
+      return {
+        'S.No': index + 1,
+        'Attendance Date': formatDisplayDate(r.date),
+        'Employee ID': r.employeeId || '',
+        'Employee Name': r.employeeName || '',
+        'Department': r.department || 'Operations',
+        'Work Mode': (r.workMode || 'WFO').toUpperCase(),
+        'Check-In Time': r.checkIn || '--',
+        'Check-Out Time': r.checkOut || '--',
+        'Working Duration': r.duration || '--',
+        'Attendance Status': displayStatus,
+        'Late Check-in Reason': lateReasonText,
+        'GPS Latitude':
+          r.checkInLatitude !== null && r.checkInLatitude !== undefined
+            ? String(r.checkInLatitude)
+            : '--',
+        'GPS Longitude':
+          r.checkInLongitude !== null && r.checkInLongitude !== undefined
+            ? String(r.checkInLongitude)
+            : '--',
+      };
+    });
+
+    const wsRecords = XLSX.utils.json_to_sheet(attendanceData);
+    // Explicit, generous column widths so no text is cut off and dates NEVER show as '########'
+    wsRecords['!cols'] = [
+      { wch: 8 },  // S.No
+      { wch: 18 }, // Attendance Date (e.g. 17-11-2026)
+      { wch: 16 }, // Employee ID (e.g. AFI-9076)
+      { wch: 34 }, // Employee Name
+      { wch: 20 }, // Department
+      { wch: 14 }, // Work Mode
+      { wch: 16 }, // Check-In Time
+      { wch: 16 }, // Check-Out Time
+      { wch: 18 }, // Working Duration
+      { wch: 18 }, // Attendance Status
+      { wch: 38 }, // Late Check-in Reason
+      { wch: 15 }, // GPS Latitude
+      { wch: 15 }, // GPS Longitude
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, wsRecords, 'Attendance Logs');
+
+    // 2. Sheet 2: Employee Summary (for date range aggregations)
+    if (employeeSummaries.length > 0) {
+      const summaryData = employeeSummaries.map((emp, idx) => ({
+        'S.No': idx + 1,
+        'Employee ID': emp.employeeId,
+        'Employee Name': emp.employeeName,
+        'Department': emp.department,
+        'Total Logged Days': emp.totalEntries,
+        'Present Days': emp.presentDays,
+        'WFO Days': emp.wfoDays,
+        'WFH Days': emp.wfhDays,
+        'Late Days': emp.lateDays,
+        'Absent Days': emp.absentDays,
+      }));
+      const wsSummary = XLSX.utils.json_to_sheet(summaryData);
+      wsSummary['!cols'] = [
+        { wch: 8 },  // S.No
+        { wch: 16 }, // Employee ID
+        { wch: 34 }, // Employee Name
+        { wch: 20 }, // Department
+        { wch: 18 }, // Total Logged Days
+        { wch: 14 }, // Present Days
+        { wch: 14 }, // WFO Days
+        { wch: 14 }, // WFH Days
+        { wch: 14 }, // Late Days
+        { wch: 14 }, // Absent Days
+      ];
+      XLSX.utils.book_append_sheet(wb, wsSummary, 'Employee-Wise Summary');
+    }
+
+    // 3. Sheet 3: Report Overview
+    const overviewData = [
+      { Metric: 'Company Name', Value: 'Arshith Connect' },
+      { Metric: 'Report Type', Value: 'Employee Attendance Management Report' },
+      { Metric: 'Filter Mode', Value: isRange ? 'Date Range Period' : 'Single Date' },
+      {
+        Metric: 'From Date',
+        Value: isRange
+          ? formatDisplayDate(appliedFilter.fromDate)
+          : formatDisplayDate(appliedFilter.singleDate),
+      },
+      {
+        Metric: 'To Date',
+        Value: isRange
+          ? formatDisplayDate(appliedFilter.toDate)
+          : formatDisplayDate(appliedFilter.singleDate),
+      },
+      { Metric: 'Total Attendance Entries', Value: summaryMetrics.totalAttendance },
+      { Metric: 'Work From Office (WFO)', Value: summaryMetrics.wfo },
+      { Metric: 'Work From Home (WFH)', Value: summaryMetrics.wfh },
+      { Metric: 'Late Check-ins', Value: summaryMetrics.late },
+      { Metric: 'Present Count', Value: summaryMetrics.present },
+      { Metric: 'Absent Count', Value: summaryMetrics.absent },
+      {
+        Metric: 'Generated At',
+        Value: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+      },
+    ];
+    const wsOverview = XLSX.utils.json_to_sheet(overviewData);
+    wsOverview['!cols'] = [{ wch: 28 }, { wch: 40 }];
+    XLSX.utils.book_append_sheet(wb, wsOverview, 'Report Overview');
+
+    XLSX.writeFile(wb, `Arshith_Attendance_Report_${reportDateLabel}.xlsx`);
+  };
+
+  // CSV Export with UTF-8 BOM for accurate character encoding and date formatting
   const handleExportCSV = () => {
+    if (!filteredRecords.length) return;
     const isRange = appliedFilter.mode === 'RANGE';
     const reportDateLabel = isRange
       ? `${formatDisplayDate(appliedFilter.fromDate)}_to_${formatDisplayDate(appliedFilter.toDate)}`
       : formatDisplayDate(appliedFilter.singleDate);
 
     const headers = [
+      'S.No',
+      'Attendance Date',
       'Employee ID',
       'Employee Name',
       'Department',
-      'Attendance Date',
       'Work Mode',
       'Check In',
       'Check Out',
@@ -392,32 +527,49 @@ export default function AdminAttendance() {
       'Longitude',
     ];
 
-    const rows = filteredRecords.map((r) => [
-      `"${r.employeeId || ''}"`,
-      `"${r.employeeName || ''}"`,
-      `"${r.department || ''}"`,
-      `"${formatDisplayDate(r.date)}"`,
-      `"${r.workMode || ''}"`,
-      `"${r.checkIn || '--'}"`,
-      `"${r.checkOut || '--'}"`,
-      `"${r.duration || '--'}"`,
-      `"${r.status || ''}"`,
-      `"${(r.lateReason || '').replace(/"/g, '""')}"`,
-      r.checkInLatitude ?? '',
-      r.checkInLongitude ?? '',
-    ]);
+    const rows = filteredRecords.map((r, index) => {
+      const isLate =
+        r.isLate ||
+        (r.status || '').toUpperCase() === 'LATE' ||
+        Boolean(r.lateReason && String(r.lateReason).trim());
+      const displayStatus = isLate ? 'Late' : (r.status || 'Present');
+      const lateReasonText =
+        r.lateReason && String(r.lateReason).trim()
+          ? String(r.lateReason).trim()
+          : isLate
+          ? 'Reason Pending'
+          : '--';
 
+      return [
+        index + 1,
+        `"${formatDisplayDate(r.date)}"`,
+        `"${r.employeeId || ''}"`,
+        `"${(r.employeeName || '').replace(/"/g, '""')}"`,
+        `"${r.department || 'Operations'}"`,
+        `"${r.workMode || 'WFO'}"`,
+        `"${r.checkIn || '--'}"`,
+        `"${r.checkOut || '--'}"`,
+        `"${r.duration || '--'}"`,
+        `"${displayStatus}"`,
+        `"${lateReasonText.replace(/"/g, '""')}"`,
+        r.checkInLatitude ?? '',
+        r.checkInLongitude ?? '',
+      ];
+    });
+
+    // \uFEFF ensures Excel treats CSV as UTF-8
     const csvContent =
-      'data:text/csv;charset=utf-8,' +
-      [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
+      '\uFEFF' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
 
-    const encodedUri = encodeURI(csvContent);
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
+    link.setAttribute('href', url);
     link.setAttribute('download', `Arshith_Attendance_Report_${reportDateLabel}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -431,13 +583,54 @@ export default function AdminAttendance() {
           { label: 'Attendance' },
         ]}
         actionButton={
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn-export-excel"
+              onClick={handleExportExcel}
+              disabled={filteredRecords.length === 0}
+              title="Download formatted Excel (.xlsx) report with auto-fitted columns and summaries"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                height: '38px',
+                padding: '0 14px',
+                borderRadius: '10px',
+                backgroundColor: '#0b3d2b',
+                color: '#ffffff',
+                fontSize: '0.825rem',
+                fontWeight: '600',
+                border: 'none',
+                cursor: filteredRecords.length === 0 ? 'not-allowed' : 'pointer',
+                opacity: filteredRecords.length === 0 ? 0.6 : 1,
+                boxShadow: '0 1px 3px rgba(11, 61, 43, 0.25)',
+              }}
+            >
+              <FileSpreadsheet size={16} />
+              <span>Export Excel (.xlsx)</span>
+            </button>
             <button
               type="button"
               className="btn-export-csv"
               onClick={handleExportCSV}
               disabled={filteredRecords.length === 0}
-              title="Download CSV for current filtered records"
+              title="Download standard CSV report"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                height: '38px',
+                padding: '0 12px',
+                borderRadius: '10px',
+                backgroundColor: '#f0fdf4',
+                color: '#166534',
+                fontSize: '0.825rem',
+                fontWeight: '600',
+                border: '1px solid #bbf7d0',
+                cursor: filteredRecords.length === 0 ? 'not-allowed' : 'pointer',
+                opacity: filteredRecords.length === 0 ? 0.6 : 1,
+              }}
             >
               <Download size={15} />
               <span>Export CSV</span>
