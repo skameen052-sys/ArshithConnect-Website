@@ -421,31 +421,6 @@ export default function AdminAttendanceReports() {
             </button>
             <button
               type="button"
-              className="btn-export-csv"
-              onClick={handleExportCSV}
-              disabled={filteredEmployees.length === 0}
-              title="Download standard CSV attendance report"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                height: '38px',
-                padding: '0 14px',
-                borderRadius: '10px',
-                backgroundColor: '#f0fdf4',
-                color: '#166534',
-                fontSize: '0.825rem',
-                fontWeight: '600',
-                border: '1px solid #bbf7d0',
-                cursor: filteredEmployees.length === 0 ? 'not-allowed' : 'pointer',
-                opacity: filteredEmployees.length === 0 ? 0.6 : 1,
-              }}
-            >
-              <Download size={15} />
-              <span>Export CSV</span>
-            </button>
-            <button
-              type="button"
               className="table-action-btn"
               onClick={() => loadReport(selectedMonth)}
               disabled={isLoading}
