@@ -8,7 +8,7 @@ export default function AdminOfficeTimings() {
 
   const [startTime, setStartTime] = useState('09:30');
   const [endTime, setEndTime] = useState('18:30');
-  const [gracePeriod, setGracePeriod] = useState(2);
+  const [gracePeriod, setGracePeriod] = useState(15);
 
   // Special-day specific fields
   const [specialDate, setSpecialDate] = useState('');
@@ -31,7 +31,7 @@ export default function AdminOfficeTimings() {
       if (data?.regular) {
         setStartTime(data.regular.startTime || '09:30');
         setEndTime(data.regular.endTime || '18:30');
-        setGracePeriod(data.regular.graceMinutes ?? 2);
+        setGracePeriod(data.regular.graceMinutes ?? 15);
       }
       if (Array.isArray(data?.specialDays)) {
         setSpecialDays(

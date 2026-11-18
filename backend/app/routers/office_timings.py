@@ -23,26 +23,42 @@ def get_office_timings(
     current_user=Depends(get_current_user),
 ):
     """Retrieve regular and special scheduled office timings from Firestore."""
+    regular = None
+    try:
+        from app.services.firestore_service import FirestoreService
+        settings_doc = FirestoreService.get("settings", "officeTimings")
+        if settings_doc:
+            regular = settings_doc
+    except Exception:
+        pass
+
+    if not regular:
+        try:
+            st = firestore_service.get_document("settings", "officeTimings")
+            if st:
+                regular = st
+        except Exception:
+            pass
+
     all_timings = firestore_service.list_documents("office_timings")
 
-    regular = None
     special_days = []
 
     for t in all_timings:
         t_id = str(t.get("id", ""))
-        if t_id == "timings" or t.get("timing_type") == "REGULAR" or "officeStartTime" in t:
+        if (t_id == "timings" or t.get("timing_type") == "REGULAR" or "officeStartTime" in t) and not regular:
             regular = t
         elif t.get("timing_type") == "SPECIAL":
             special_days.append(t)
 
     special_days.sort(key=lambda s: str(s.get("special_date", "")))
 
-    start_time = "09:00"
-    end_time = "18:00"
+    start_time = "09:30"
+    end_time = "18:30"
     grace_minutes = 15
     if regular:
-        start_time = regular.get("officeStartTime") or regular.get("startTime") or regular.get("start_time") or "09:00"
-        end_time = regular.get("officeEndTime") or regular.get("endTime") or regular.get("end_time") or "18:00"
+        start_time = regular.get("officeStartTime") or regular.get("startTime") or regular.get("start_time") or "09:30"
+        end_time = regular.get("officeEndTime") or regular.get("endTime") or regular.get("end_time") or "18:30"
         try:
             grace_minutes = int(regular.get("gracePeriodMinutes") or regular.get("graceMinutes") or regular.get("grace_minutes") or 15)
         except Exception:
