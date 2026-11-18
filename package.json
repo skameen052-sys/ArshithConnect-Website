@@ -4,8 +4,9 @@
   "private": true,
   "description": "Arshith Connect full-stack enterprise workforce platform",
   "scripts": {
+    "build": "npm --prefix frontend install && npm --prefix frontend run build",
+    "start": "npm --prefix frontend run preview",
     "android": "react-native run-android",
-    "start": "react-native start",
     "build:android": "cd android && gradlew.bat assembleDebug",
     "functions:serve": "npm --prefix functions run serve",
     "frontend:dev": "npm --prefix frontend run dev",
