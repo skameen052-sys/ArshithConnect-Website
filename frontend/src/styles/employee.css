@@ -16,18 +16,25 @@
 }
 
 .employee-content-container {
-  max-width: 1180px;
+  max-width: 1280px;
   margin: 0 auto;
   padding: 16px 24px 80px 24px;
   width: 100%;
   box-sizing: border-box;
   position: relative;
   z-index: 1;
+  min-width: 0;
+}
+
+.employee-content-container:has(.employee-chat-page) {
+  padding-bottom: 14px;
 }
 
 .employee-main-content {
   width: 100%;
   box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* Eliminate redundant nested padding when HRMS container is inside employee shell */
@@ -259,6 +266,16 @@
   font-size: 1rem;
   font-weight: 700;
   flex-shrink: 0;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.drawer-user-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 10px;
+  display: block;
 }
 
 .drawer-user-meta {

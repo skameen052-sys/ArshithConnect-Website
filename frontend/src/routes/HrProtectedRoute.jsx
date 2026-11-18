@@ -1,5 +1,6 @@
 import React from 'react';
 import { Navigate, Outlet } from 'react-router-dom';
+import { hasActiveAuthStorage } from '../utils/authSession';
 
 /**
  * HrProtectedRoute - Guards Human Resources routes
@@ -7,11 +8,7 @@ import { Navigate, Outlet } from 'react-router-dom';
  * Redirects unauthenticated users to /hr/login.
  */
 export default function HrProtectedRoute() {
-  const role = localStorage.getItem('arshith_role');
-  const user = localStorage.getItem('arshith_user');
-  const token = localStorage.getItem('arshith_auth_token');
-
-  if (!role || !user || !token || (role !== 'hr' && role !== 'admin')) {
+  if (!hasActiveAuthStorage(['hr', 'admin'])) {
     return <Navigate to="/hr/login" replace />;
   }
 

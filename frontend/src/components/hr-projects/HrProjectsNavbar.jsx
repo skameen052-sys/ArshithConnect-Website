@@ -3,15 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { LogOut, MessageSquare } from 'lucide-react';
 import BrandLogo from '../common/BrandLogo';
 import { chatService } from '../../services/chatService';
+import authService from '../../services/authService';
 
 export default function HrProjectsNavbar({ onToggleSidebar }) {
   const navigate = useNavigate();
   const [unreadCount, setUnreadCount] = useState(0);
 
   const handleLogout = useCallback(() => {
-    localStorage.removeItem('arshith_role');
-    localStorage.removeItem('arshith_user');
-    localStorage.removeItem('arshith_auth_token');
+    authService.logout();
     navigate('/hr-projects/login');
   }, [navigate]);
 
@@ -38,8 +37,10 @@ export default function HrProjectsNavbar({ onToggleSidebar }) {
       return null;
     }
   })();
+  const [imgError, setImgError] = useState(false);
   const hrName = storedUser?.name || storedUser?.fullName || 'Project HR Lead';
   const hrEmail = storedUser?.email || 'project.hr@arshith.com';
+  const hrPhoto = storedUser?.photoUrl || storedUser?.profile_photo || storedUser?.profilePhoto || storedUser?.avatar || '';
 
   return (
     <header className="portal-navbar">
@@ -83,8 +84,12 @@ export default function HrProjectsNavbar({ onToggleSidebar }) {
         </button>
 
         <div className="user-profile-badge" title={`${hrName} (${hrEmail})`}>
-          <div className="user-avatar" style={{ backgroundColor: '#0b3d2b' }}>
-            {hrName.charAt(0).toUpperCase()}
+          <div className="user-avatar" style={{ backgroundColor: '#0b3d2b', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {hrPhoto && !imgError ? (
+              <img src={hrPhoto} alt={hrName} onError={() => setImgError(true)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              hrName.charAt(0).toUpperCase()
+            )}
           </div>
           <div className="user-info-text">
             <div className="user-name">{hrName}</div>

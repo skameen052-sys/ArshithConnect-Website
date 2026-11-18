@@ -49,7 +49,7 @@ export default function AdminAttendanceReports() {
 
   // Frontend CSV Export
   const handleExportCSV = () => {
-    const headers = ['ID', 'Employee ID', 'Employee Name', 'Department', 'Date', 'Check In', 'Check Out', 'Work Mode', 'Status'];
+    const headers = ['ID', 'Employee ID', 'Employee Name', 'Department', 'Date', 'Check In', 'Check Out', 'Duration', 'Work Mode', 'Status'];
     const rows = filteredRecords.map((r) => [
       r.id,
       r.employeeId,
@@ -58,6 +58,7 @@ export default function AdminAttendanceReports() {
       r.date,
       r.checkIn,
       r.checkOut,
+      `"${r.duration || '--'}"`,
       r.workMode,
       r.status,
     ]);
@@ -105,23 +106,23 @@ export default function AdminAttendanceReports() {
           marginBottom: '24px'
         }}
       >
-        <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '16px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
+        <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '16px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
           <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#64748b' }}>PRESENT</div>
           <div style={{ fontSize: '1.8rem', fontWeight: '800', color: '#047857' }}>{totalPresent}</div>
         </div>
-        <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '16px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
+        <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '16px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
           <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#64748b' }}>LATE</div>
           <div style={{ fontSize: '1.8rem', fontWeight: '800', color: '#f59e0b' }}>{totalLate}</div>
         </div>
-        <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '16px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
+        <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '16px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
           <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#64748b' }}>ABSENT</div>
           <div style={{ fontSize: '1.8rem', fontWeight: '800', color: '#ef4444' }}>{totalAbsent}</div>
         </div>
-        <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '16px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
+        <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '16px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
           <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#64748b' }}>WFO</div>
           <div style={{ fontSize: '1.8rem', fontWeight: '800', color: '#0b3d2b' }}>{totalWFO}</div>
         </div>
-        <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '16px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
+        <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '16px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
           <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#64748b' }}>WFH</div>
           <div style={{ fontSize: '1.8rem', fontWeight: '800', color: '#2563eb' }}>{totalWFH}</div>
         </div>
@@ -187,6 +188,7 @@ export default function AdminAttendanceReports() {
                   <th>Work Mode</th>
                   <th>Check In</th>
                   <th>Check Out</th>
+                  <th>Duration</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -223,6 +225,7 @@ export default function AdminAttendanceReports() {
                       </td>
                       <td style={{ fontWeight: '600' }}>{rec.checkIn}</td>
                       <td style={{ color: '#64748b' }}>{rec.checkOut}</td>
+                      <td style={{ fontWeight: '600', color: '#0f766e' }}>{rec.duration || '--'}</td>
                       <td>
                         <span className={`badge-status ${statusBadgeClass}`}>
                           {rec.status}

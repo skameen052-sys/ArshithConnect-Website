@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   FolderKanban,
   Users,
@@ -15,7 +15,9 @@ import {
   Filter,
   Clock,
   AlertCircle,
+  AlertTriangle,
   Check,
+  X,
   RefreshCw,
   Send,
   ArrowRight,
@@ -25,13 +27,18 @@ import {
   ChevronUp,
   Plus,
   Eye,
+  MessageSquare,
 } from 'lucide-react';
 import Modal from '../../components/common/Modal';
 import { teamLeaderService } from '../../services/teamLeaderService';
+import WorkUpdatesDrilldown from '../../components/work-updates/WorkUpdatesDrilldown';
 
-export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChange }) {
+// Arshith Connect - Team Leader Dashboard
+export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChange, openCreateTaskSignal }) {
   // Master state
   const [loading, setLoading] = useState(true);
+  const [isSubmittingTask, setIsSubmittingTask] = useState(false);
+  const isFetchingRef = useRef(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successToast, setSuccessToast] = useState('');
 
@@ -46,7 +53,7 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
   const [searchQuery, setSearchQuery] = useState('');
   const [taskStatusFilter, setTaskStatusFilter] = useState('ALL');
   const [selectedProjectId, setSelectedProjectId] = useState('ALL');
-  const [expandedProjectIds, setExpandedProjectIds] = useState(new Set());
+  const [expandedProjectId, setExpandedProjectId] = useState(null);
 
   // Modals state
   const [isCreateTaskModalOpen, setIsCreateTaskModalOpen] = useState(false);
@@ -103,8 +110,10 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
   };
 
   // Load all dashboard data
-  const loadDashboardData = useCallback(async () => {
-    setLoading(true);
+  const loadDashboardData = useCallback(async (silent = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+    if (!silent) setLoading(true);
     setErrorMsg('');
     try {
       const [projData, teamData, taskData, updateData, perfData] = await Promise.all([
@@ -121,24 +130,50 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
       setWorkUpdates(updateData || []);
       setPerformance(perfData || null);
 
-      if (projData && projData.length > 0 && !taskForm.project_id) {
-        setTaskForm((prev) => ({ ...prev, project_id: projData[0].id }));
-        setUpdateForm((prev) => ({ ...prev, project_id: projData[0].id }));
+      if (projData && projData.length > 0) {
+        setTaskForm((prev) => (prev.project_id ? prev : { ...prev, project_id: projData[0].id }));
+        setUpdateForm((prev) => (prev.project_id ? prev : { ...prev, project_id: projData[0].id }));
       }
-      if (teamData && teamData.length > 0 && !taskForm.assigned_to) {
-        setTaskForm((prev) => ({ ...prev, assigned_to: teamData[0].name }));
-        setUpdateForm((prev) => ({ ...prev, employee_name: teamData[0].name }));
+      if (teamData && teamData.length > 0) {
+        setTaskForm((prev) => (prev.assigned_to ? prev : { ...prev, assigned_to: teamData[0].name }));
+        setUpdateForm((prev) => (prev.employee_name ? prev : { ...prev, employee_name: teamData[0].name }));
       }
     } catch (err) {
       setErrorMsg(err.response?.data?.detail || err.message || 'Failed to fetch team leader data.');
     } finally {
+      isFetchingRef.current = false;
       setLoading(false);
     }
-  }, [taskForm.project_id, taskForm.assigned_to]);
+  }, []);
 
   useEffect(() => {
-    loadDashboardData();
+    loadDashboardData(false);
+    const handleFocus = () => loadDashboardData(true);
+    window.addEventListener('focus', handleFocus);
+    const interval = setInterval(() => {
+      loadDashboardData(true);
+    }, 12000);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      clearInterval(interval);
+    };
   }, [loadDashboardData]);
+
+  // Handle opening the Create Task modal from sidebar or top navigation
+  useEffect(() => {
+    if (openCreateTaskSignal > 0) {
+      openCreateTaskForProject(projects[0]);
+    }
+  }, [openCreateTaskSignal, projects]);
+
+  useEffect(() => {
+    if (activeTab === 'create-task') {
+      openCreateTaskForProject(projects[0]);
+      if (onTabChange) {
+        onTabChange('tasks');
+      }
+    }
+  }, [activeTab, projects, onTabChange]);
 
   // Derived filtered tasks
   const filteredTasks = useMemo(() => {
@@ -165,56 +200,188 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
     return tasks.filter((t) => t.status === 'REWORK');
   }, [tasks]);
 
-  // Project & employee filtering for task creation (strictly scoped to project's assigned employees)
+  // Project & employee filtering for task creation (includes project members and all team roster members)
   const selectedProjectForTask = useMemo(() => {
     return projects.find((p) => p.id === taskForm.project_id) || projects[0] || null;
   }, [projects, taskForm.project_id]);
 
   const availableEmployeesForTask = useMemo(() => {
-    if (!selectedProjectForTask) return [];
-    const rawAssigned = selectedProjectForTask.assigned_employees || [];
-    if (rawAssigned.length === 0) return [];
+    const list = [];
+    const seenNames = new Set();
 
-    return rawAssigned.map((empName) => {
-      const cleanName = String(empName).trim();
+    // 1. Project-assigned employees first
+    const rawAssigned = selectedProjectForTask?.assigned_employees || [];
+    rawAssigned.forEach((empName) => {
+      const cleanName = String(empName || '').trim();
+      if (!cleanName || seenNames.has(cleanName.toLowerCase())) return;
+      seenNames.add(cleanName.toLowerCase());
       const matched = teamMembers.find(
-        (m) => String(m.name).toLowerCase().trim() === cleanName.toLowerCase()
+        (m) => String(m.name || '').toLowerCase().trim() === cleanName.toLowerCase()
       );
-      return {
+      list.push({
         id: matched?.id || cleanName,
         name: cleanName,
         email: matched?.email || '',
-        department: matched?.department || selectedProjectForTask.department || 'Operations',
+        department: matched?.department || selectedProjectForTask?.department || 'Operations',
         designation: matched?.designation || 'Project Member',
-      };
+        isDirectProjectMember: true,
+      });
     });
+
+    // 2. All team roster members
+    teamMembers.forEach((m) => {
+      const cleanName = String(m.name || '').trim();
+      if (!cleanName || seenNames.has(cleanName.toLowerCase())) return;
+      seenNames.add(cleanName.toLowerCase());
+      list.push({
+        id: m.id || cleanName,
+        name: cleanName,
+        email: m.email || '',
+        department: m.department || selectedProjectForTask?.department || 'Operations',
+        designation: m.designation || 'Team Member',
+        isDirectProjectMember: false,
+      });
+    });
+
+    return list;
   }, [selectedProjectForTask, teamMembers]);
 
-  const toggleProjectEmployees = (projId) => {
-    setExpandedProjectIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(projId)) {
-        next.delete(projId);
-      } else {
-        next.add(projId);
+  // Ensure taskForm.assigned_to is always set to a valid employee name
+  useEffect(() => {
+    if (availableEmployeesForTask.length > 0) {
+      if (!taskForm.assigned_to || !availableEmployeesForTask.some((m) => m.name === taskForm.assigned_to)) {
+        setTaskForm((prev) => ({ ...prev, assigned_to: availableEmployeesForTask[0].name }));
       }
-      return next;
-    });
+    }
+  }, [availableEmployeesForTask, taskForm.assigned_to]);
+
+  // Deadline urgency calculator helper
+  const getDeadlineUrgency = useCallback((deadlineStr) => {
+    if (!deadlineStr) return { status: 'none', label: 'No Deadline', color: '#64748b', bg: '#f1f5f9' };
+    let targetDate = null;
+    const partsHyphen = String(deadlineStr).split('-');
+    if (partsHyphen.length === 3) {
+      if (partsHyphen[0].length === 4) {
+        targetDate = new Date(`${partsHyphen[0]}-${partsHyphen[1]}-${partsHyphen[2]}T23:59:59`);
+      } else if (partsHyphen[2].length === 4) {
+        targetDate = new Date(`${partsHyphen[2]}-${partsHyphen[1]}-${partsHyphen[0]}T23:59:59`);
+      }
+    }
+    if (!targetDate || isNaN(targetDate.getTime())) {
+      targetDate = new Date(deadlineStr);
+    }
+    if (isNaN(targetDate.getTime())) {
+      return { status: 'set', label: deadlineStr, color: '#0b3d2b', bg: '#ecfdf5' };
+    }
+    const now = new Date();
+    const diffMs = targetDate.getTime() - now.getTime();
+    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffDays < 0) {
+      return {
+        status: 'overdue',
+        label: `Overdue by ${Math.abs(diffDays)}d`,
+        color: '#dc2626',
+        bg: '#fee2e2',
+        border: '#fca5a5',
+        days: diffDays,
+      };
+    } else if (diffDays === 0) {
+      return {
+        status: 'today',
+        label: 'Due Today',
+        color: '#d97706',
+        bg: '#fef3c7',
+        border: '#fde68a',
+        days: 0,
+      };
+    } else if (diffDays <= 2) {
+      return {
+        status: 'urgent',
+        label: `Due in ${diffDays}d`,
+        color: '#d97706',
+        bg: '#fef3c7',
+        border: '#fde68a',
+        days: diffDays,
+      };
+    } else {
+      return {
+        status: 'upcoming',
+        label: `${diffDays} days left`,
+        color: '#047857',
+        bg: '#ecfdf5',
+        border: '#a7f3d0',
+        days: diffDays,
+      };
+    }
+  }, []);
+
+  // Quick deadline extension helper
+  const handleQuickExtendDeadline = async (task, daysToAdd) => {
+    try {
+      let baseDate = new Date();
+      if (task.deadline) {
+        const parsed = new Date(task.deadline);
+        if (!isNaN(parsed.getTime()) && parsed > baseDate) {
+          baseDate = parsed;
+        }
+      }
+      baseDate.setDate(baseDate.getDate() + daysToAdd);
+      const newDeadlineIso = baseDate.toISOString().split('T')[0];
+      const updated = await teamLeaderService.updateTaskDeadline(task.id, {
+        deadline: newDeadlineIso,
+        priority: task.priority || 'High',
+        notes: `Quick deadline extension (+${daysToAdd} days) by Team Leader`,
+      });
+      setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+      showToast(`Deadline for "${task.title}" extended by ${daysToAdd} days (${newDeadlineIso}).`);
+    } catch (err) {
+      alert(err.response?.data?.detail || err.message || 'Failed to extend deadline.');
+    }
+  };
+
+  const toggleProjectEmployees = (projId) => {
+    setExpandedProjectId((prev) => (prev === projId ? null : projId));
   };
 
   const openCreateTaskForProject = (proj, employeeName = '') => {
-    const rawAssigned = proj.assigned_employees || [];
-    const targetEmp = employeeName || (rawAssigned.length > 0 ? rawAssigned[0] : '');
+    const targetProj = proj || (projects && projects.length > 0 ? projects[0] : null);
+    const rawAssigned = targetProj?.assigned_employees || [];
+    let targetEmp = employeeName;
+    if (!targetEmp) {
+      if (rawAssigned.length > 0) {
+        targetEmp = rawAssigned[0];
+      } else if (teamMembers.length > 0) {
+        targetEmp = teamMembers[0].name;
+      }
+    }
     setTaskForm({
-      project_id: proj.id,
+      project_id: targetProj?.id || (projects[0]?.id || ''),
       title: '',
       description: '',
-      assigned_to: targetEmp,
-      deadline: proj.deadline || '',
+      assigned_to: targetEmp || '',
+      deadline: targetProj?.deadline || '',
       priority: 'High',
       estimated_hours: 8.0,
     });
     setIsCreateTaskModalOpen(true);
+  };
+
+  const openWorkUpdateModal = (projectId = '', employeeName = '', taskId = '') => {
+    const targetProjId = projectId || (projects && projects.length > 0 ? projects[0].id : '');
+    let targetEmpName = employeeName;
+    if (!targetEmpName && teamMembers && teamMembers.length > 0) {
+      targetEmpName = teamMembers[0].name;
+    }
+    setUpdateForm({
+      project_id: targetProjId,
+      task_id: taskId || '',
+      employee_name: targetEmpName || '',
+      hours_worked: 8,
+      summary: '',
+      blockers: 'None',
+    });
+    setIsWorkUpdateModalOpen(true);
   };
 
   const openPdfViewer = (pdfData, pdfName = 'Project_Proposal.pdf') => {
@@ -260,7 +427,8 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
     setTaskForm((prev) => ({
       ...prev,
       project_id: projId,
-      assigned_to: assigned.length > 0 ? assigned[0] : '',
+      assigned_to: assigned.length > 0 ? assigned[0] : (teamMembers[0]?.name || ''),
+      deadline: proj?.deadline || prev.deadline,
     }));
   };
 
@@ -271,9 +439,15 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
   // Req 8 & 9: Create & Assign Task
   const handleCreateTask = async (e) => {
     e.preventDefault();
+    if (isSubmittingTask) return;
     try {
+      setIsSubmittingTask(true);
       const newTask = await teamLeaderService.createTask(taskForm);
-      setTasks((prev) => [newTask, ...prev]);
+      setTasks((prev) =>
+        prev.some((t) => t.id === newTask.id)
+          ? prev.map((t) => (t.id === newTask.id ? newTask : t))
+          : [newTask, ...prev]
+      );
       setIsCreateTaskModalOpen(false);
       showToast(`Task "${newTask.title}" created & assigned to ${newTask.assigned_to}!`);
       setTaskForm({
@@ -285,9 +459,11 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
         priority: 'High',
         estimated_hours: 8.0,
       });
-      loadDashboardData();
+      loadDashboardData(true);
     } catch (err) {
       alert(err.response?.data?.detail || err.message || 'Failed to create task.');
+    } finally {
+      setIsSubmittingTask(false);
     }
   };
 
@@ -325,7 +501,7 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
       });
       setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
       showToast(`Task "${task.title}" approved successfully!`);
-      loadDashboardData();
+      loadDashboardData(true);
     } catch (err) {
       alert(err.response?.data?.detail || err.message || 'Failed to approve task.');
     }
@@ -342,7 +518,7 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
       });
       setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
       showToast(`Task "${task.title}" marked as rejected.`);
-      loadDashboardData();
+      loadDashboardData(true);
     } catch (err) {
       alert(err.response?.data?.detail || err.message || 'Failed to reject task.');
     }
@@ -370,7 +546,7 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
       setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
       setIsReworkModalOpen(false);
       showToast(`Rework assigned for "${selectedTask.title}". Feedback sent to ${selectedTask.assigned_to}.`);
-      loadDashboardData();
+      loadDashboardData(true);
     } catch (err) {
       alert(err.response?.data?.detail || err.message || 'Failed to assign rework.');
     }
@@ -514,7 +690,7 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
         </div>
       </div>
 
-      {/* Top 6 KPI Metric Cards */}
+      {/* Top 6 KPI Metric Cards - Interactive Navigation Boxes matching Screenshot 3 */}
       <div
         style={{
           display: 'grid',
@@ -524,10 +700,29 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
         }}
       >
         {/* KPI 1: Assigned Projects (Req 6) */}
-        <div className="admin-stat-card" style={{ padding: '16px 18px', borderLeft: '4px solid #0b3d2b' }}>
+        <div
+          className="admin-stat-card"
+          onClick={() => onTabChange && onTabChange('projects')}
+          role="button"
+          tabIndex={0}
+          title="Click to view Assigned Projects"
+          style={{
+            padding: '16px 18px',
+            borderLeft: '4px solid #0b3d2b',
+            cursor: 'pointer',
+            backgroundColor: (activeTab === 'projects' || activeTab === 'dashboard') ? '#ecfdf5' : '#ffffff',
+            boxShadow: (activeTab === 'projects' || activeTab === 'dashboard') ? '0 6px 16px rgba(11,61,43,0.12)' : '0 2px 6px rgba(0,0,0,0.03)',
+            borderRadius: '12px',
+            borderTop: (activeTab === 'projects' || activeTab === 'dashboard') ? '2px solid #0b3d2b' : '1px solid #e2e8f0',
+            borderRight: (activeTab === 'projects' || activeTab === 'dashboard') ? '2px solid #0b3d2b' : '1px solid #e2e8f0',
+            borderBottom: (activeTab === 'projects' || activeTab === 'dashboard') ? '2px solid #0b3d2b' : '1px solid #e2e8f0',
+            transition: 'all 0.18s cubic-bezier(0.4, 0, 0.2, 1)',
+            transform: (activeTab === 'projects' || activeTab === 'dashboard') ? 'translateY(-2px)' : 'none',
+          }}
+        >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>
-              6. Assigned Projects
+            <span style={{ fontSize: '0.75rem', fontWeight: '800', color: (activeTab === 'projects' || activeTab === 'dashboard') ? '#0b3d2b' : '#64748b', textTransform: 'uppercase' }}>
+              ASSIGNED PROJECTS
             </span>
             <FolderKanban size={18} color="#0b3d2b" />
           </div>
@@ -539,11 +734,30 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
           </div>
         </div>
 
-        {/* KPI 2: Assigned Team (Req 7) */}
-        <div className="admin-stat-card" style={{ padding: '16px 18px', borderLeft: '4px solid #0f766e' }}>
+        {/* KPI 2: Assigned Team */}
+        <div
+          className="admin-stat-card"
+          onClick={() => onTabChange && onTabChange('team')}
+          role="button"
+          tabIndex={0}
+          title="Click to view Assigned Team"
+          style={{
+            padding: '16px 18px',
+            borderLeft: '4px solid #0f766e',
+            cursor: 'pointer',
+            backgroundColor: activeTab === 'team' ? '#f0fdfa' : '#ffffff',
+            boxShadow: activeTab === 'team' ? '0 6px 16px rgba(15,118,110,0.12)' : '0 2px 6px rgba(0,0,0,0.03)',
+            borderRadius: '12px',
+            borderTop: activeTab === 'team' ? '2px solid #0f766e' : '1px solid #e2e8f0',
+            borderRight: activeTab === 'team' ? '2px solid #0f766e' : '1px solid #e2e8f0',
+            borderBottom: activeTab === 'team' ? '2px solid #0f766e' : '1px solid #e2e8f0',
+            transition: 'all 0.18s cubic-bezier(0.4, 0, 0.2, 1)',
+            transform: activeTab === 'team' ? 'translateY(-2px)' : 'none',
+          }}
+        >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>
-              7. Assigned Team
+            <span style={{ fontSize: '0.75rem', fontWeight: '800', color: activeTab === 'team' ? '#0f766e' : '#64748b', textTransform: 'uppercase' }}>
+              ASSIGNED TEAM
             </span>
             <Users size={18} color="#0f766e" />
           </div>
@@ -555,11 +769,30 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
           </div>
         </div>
 
-        {/* KPI 3: Total Tasks (Req 8, 9) */}
-        <div className="admin-stat-card" style={{ padding: '16px 18px', borderLeft: '4px solid #3b82f6' }}>
+        {/* KPI 3: Total Tasks */}
+        <div
+          className="admin-stat-card"
+          onClick={() => onTabChange && onTabChange('tasks')}
+          role="button"
+          tabIndex={0}
+          title="Click to view Task Management"
+          style={{
+            padding: '16px 18px',
+            borderLeft: '4px solid #3b82f6',
+            cursor: 'pointer',
+            backgroundColor: (activeTab === 'tasks' || activeTab === 'deadlines' || activeTab === 'monitor-work') ? '#eff6ff' : '#ffffff',
+            boxShadow: (activeTab === 'tasks' || activeTab === 'deadlines' || activeTab === 'monitor-work') ? '0 6px 16px rgba(59,130,246,0.12)' : '0 2px 6px rgba(0,0,0,0.03)',
+            borderRadius: '12px',
+            borderTop: (activeTab === 'tasks' || activeTab === 'deadlines' || activeTab === 'monitor-work') ? '2px solid #3b82f6' : '1px solid #e2e8f0',
+            borderRight: (activeTab === 'tasks' || activeTab === 'deadlines' || activeTab === 'monitor-work') ? '2px solid #3b82f6' : '1px solid #e2e8f0',
+            borderBottom: (activeTab === 'tasks' || activeTab === 'deadlines' || activeTab === 'monitor-work') ? '2px solid #3b82f6' : '1px solid #e2e8f0',
+            transition: 'all 0.18s cubic-bezier(0.4, 0, 0.2, 1)',
+            transform: (activeTab === 'tasks' || activeTab === 'deadlines' || activeTab === 'monitor-work') ? 'translateY(-2px)' : 'none',
+          }}
+        >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>
-              8 & 9. Total Tasks
+            <span style={{ fontSize: '0.75rem', fontWeight: '800', color: (activeTab === 'tasks' || activeTab === 'deadlines' || activeTab === 'monitor-work') ? '#1d4ed8' : '#64748b', textTransform: 'uppercase' }}>
+              TOTAL TASKS
             </span>
             <Activity size={18} color="#3b82f6" />
           </div>
@@ -571,11 +804,30 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
           </div>
         </div>
 
-        {/* KPI 4: Submitted for Review (Req 13) */}
-        <div className="admin-stat-card" style={{ padding: '16px 18px', borderLeft: '4px solid #f59e0b' }}>
+        {/* KPI 4: Submitted for Review */}
+        <div
+          className="admin-stat-card"
+          onClick={() => onTabChange && onTabChange('task-review')}
+          role="button"
+          tabIndex={0}
+          title="Click to view Review Queue"
+          style={{
+            padding: '16px 18px',
+            borderLeft: '4px solid #f59e0b',
+            cursor: 'pointer',
+            backgroundColor: (activeTab === 'task-review' || activeTab === 'submitted-tasks') ? '#fffbeb' : '#ffffff',
+            boxShadow: (activeTab === 'task-review' || activeTab === 'submitted-tasks') ? '0 6px 16px rgba(245,158,11,0.12)' : '0 2px 6px rgba(0,0,0,0.03)',
+            borderRadius: '12px',
+            borderTop: (activeTab === 'task-review' || activeTab === 'submitted-tasks') ? '2px solid #f59e0b' : '1px solid #e2e8f0',
+            borderRight: (activeTab === 'task-review' || activeTab === 'submitted-tasks') ? '2px solid #f59e0b' : '1px solid #e2e8f0',
+            borderBottom: (activeTab === 'task-review' || activeTab === 'submitted-tasks') ? '2px solid #f59e0b' : '1px solid #e2e8f0',
+            transition: 'all 0.18s cubic-bezier(0.4, 0, 0.2, 1)',
+            transform: (activeTab === 'task-review' || activeTab === 'submitted-tasks') ? 'translateY(-2px)' : 'none',
+          }}
+        >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>
-              13. Review Queue
+            <span style={{ fontSize: '0.75rem', fontWeight: '800', color: (activeTab === 'task-review' || activeTab === 'submitted-tasks') ? '#b45309' : '#64748b', textTransform: 'uppercase' }}>
+              REVIEW QUEUE
             </span>
             <CheckCircle2 size={18} color="#f59e0b" />
           </div>
@@ -587,11 +839,30 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
           </div>
         </div>
 
-        {/* KPI 5: Active Rework (Req 15) */}
-        <div className="admin-stat-card" style={{ padding: '16px 18px', borderLeft: '4px solid #ef4444' }}>
+        {/* KPI 5: Active Rework */}
+        <div
+          className="admin-stat-card"
+          onClick={() => onTabChange && onTabChange('rework')}
+          role="button"
+          tabIndex={0}
+          title="Click to view Active Rework"
+          style={{
+            padding: '16px 18px',
+            borderLeft: '4px solid #ef4444',
+            cursor: 'pointer',
+            backgroundColor: activeTab === 'rework' ? '#fef2f2' : '#ffffff',
+            boxShadow: activeTab === 'rework' ? '0 6px 16px rgba(239,68,68,0.12)' : '0 2px 6px rgba(0,0,0,0.03)',
+            borderRadius: '12px',
+            borderTop: activeTab === 'rework' ? '2px solid #ef4444' : '1px solid #e2e8f0',
+            borderRight: activeTab === 'rework' ? '2px solid #ef4444' : '1px solid #e2e8f0',
+            borderBottom: activeTab === 'rework' ? '2px solid #ef4444' : '1px solid #e2e8f0',
+            transition: 'all 0.18s cubic-bezier(0.4, 0, 0.2, 1)',
+            transform: activeTab === 'rework' ? 'translateY(-2px)' : 'none',
+          }}
+        >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>
-              15. Active Rework
+            <span style={{ fontSize: '0.75rem', fontWeight: '800', color: activeTab === 'rework' ? '#b91c1c' : '#64748b', textTransform: 'uppercase' }}>
+              ACTIVE REWORK
             </span>
             <RotateCcw size={18} color="#ef4444" />
           </div>
@@ -603,11 +874,30 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
           </div>
         </div>
 
-        {/* KPI 6: Team Velocity (Req 16) */}
-        <div className="admin-stat-card" style={{ padding: '16px 18px', borderLeft: '4px solid #10b981' }}>
+        {/* KPI 6: Team Velocity */}
+        <div
+          className="admin-stat-card"
+          onClick={() => onTabChange && onTabChange('performance')}
+          role="button"
+          tabIndex={0}
+          title="Click to view Team Performance"
+          style={{
+            padding: '16px 18px',
+            borderLeft: '4px solid #10b981',
+            cursor: 'pointer',
+            backgroundColor: activeTab === 'performance' ? '#ecfdf5' : '#ffffff',
+            boxShadow: activeTab === 'performance' ? '0 6px 16px rgba(16,185,129,0.12)' : '0 2px 6px rgba(0,0,0,0.03)',
+            borderRadius: '12px',
+            borderTop: activeTab === 'performance' ? '2px solid #10b981' : '1px solid #e2e8f0',
+            borderRight: activeTab === 'performance' ? '2px solid #10b981' : '1px solid #e2e8f0',
+            borderBottom: activeTab === 'performance' ? '2px solid #10b981' : '1px solid #e2e8f0',
+            transition: 'all 0.18s cubic-bezier(0.4, 0, 0.2, 1)',
+            transform: activeTab === 'performance' ? 'translateY(-2px)' : 'none',
+          }}
+        >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>
-              16. Completion Rate
+            <span style={{ fontSize: '0.75rem', fontWeight: '800', color: activeTab === 'performance' ? '#047857' : '#64748b', textTransform: 'uppercase' }}>
+              COMPLETION RATE
             </span>
             <TrendingUp size={18} color="#10b981" />
           </div>
@@ -632,20 +922,34 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
         }}
       >
         {[
-          { key: 'projects', label: '6. Assigned Projects', icon: FolderKanban },
-          { key: 'team', label: '7. Assigned Team', icon: Users },
-          { key: 'tasks', label: '8-11. Task Management', icon: Activity },
-          { key: 'submitted-tasks', label: `13-15. Review Queue (${submittedTasks.length})`, icon: CheckCircle2 },
-          { key: 'work-updates', label: '12. Daily Work Updates', icon: FileText },
-          { key: 'performance', label: '16. Team Performance', icon: BarChart3 },
+          { key: 'projects', label: 'Assigned Projects', icon: FolderKanban },
+          { key: 'team', label: 'Assigned Team', icon: Users },
+          { key: 'create-task', label: '+ Create Tasks', icon: PlusCircle, isAction: true },
+          { key: 'tasks', label: 'Task Management', icon: UserCheck },
+          { key: 'deadlines', label: 'Set Deadlines', icon: Calendar },
+          { key: 'monitor-work', label: 'Monitor Work', icon: Activity },
+          { key: 'task-review', label: `Approve / Reject (${submittedTasks.length})`, icon: CheckCircle2 },
+          { key: 'work-updates', label: 'Daily Work Updates', icon: FileText },
+          { key: 'rework', label: `Assign Rework (${reworkTasks.length})`, icon: RotateCcw },
+          { key: 'performance', label: 'Team Performance', icon: BarChart3 },
         ].map((tab) => {
-          const isActive = activeTab === tab.key;
+          const isActive =
+            activeTab === tab.key ||
+            (tab.key === 'task-review' && activeTab === 'submitted-tasks') ||
+            (tab.key === 'submitted-tasks' && activeTab === 'task-review') ||
+            (tab.key === 'projects' && activeTab === 'dashboard');
           const Icon = tab.icon;
           return (
             <button
               key={tab.key}
               type="button"
-              onClick={() => onTabChange && onTabChange(tab.key)}
+              onClick={() => {
+                if (tab.key === 'create-task') {
+                  openCreateTaskForProject(projects[0]);
+                } else if (onTabChange) {
+                  onTabChange(tab.key);
+                }
+              }}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -653,11 +957,11 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
                 padding: '10px 16px',
                 fontSize: '0.85rem',
                 fontWeight: isActive ? '800' : '600',
-                color: isActive ? '#0b3d2b' : '#64748b',
-                backgroundColor: isActive ? '#ecfdf5' : 'transparent',
-                border: 'none',
-                borderBottom: isActive ? '3px solid #0b3d2b' : '3px solid transparent',
-                borderRadius: '8px 8px 0 0',
+                color: isActive ? '#0b3d2b' : (tab.key === 'create-task' ? '#047857' : '#64748b'),
+                backgroundColor: isActive ? '#ecfdf5' : (tab.key === 'create-task' ? '#f0fdf4' : 'transparent'),
+                border: tab.key === 'create-task' ? '1px dashed #059669' : 'none',
+                borderBottom: isActive ? '3px solid #0b3d2b' : (tab.key === 'create-task' ? '1px dashed #059669' : '3px solid transparent'),
+                borderRadius: tab.key === 'create-task' ? '8px' : '8px 8px 0 0',
                 cursor: 'pointer',
                 whiteSpace: 'nowrap',
                 transition: 'all 0.15s ease',
@@ -706,7 +1010,7 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
           </div>
 
           {projects.length === 0 ? (
-            <div style={{ padding: '40px', textAlign: 'center', backgroundColor: '#fff', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+            <div className="travel-border-card" style={{ padding: '40px', textAlign: 'center', backgroundColor: '#fff', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
               <FolderKanban size={36} color="#94a3b8" style={{ margin: '0 auto 10px auto' }} />
               <div style={{ fontSize: '0.95rem', fontWeight: '700', color: '#475569' }}>No Projects Currently Assigned</div>
               <p style={{ fontSize: '0.82rem', color: '#94a3b8', margin: '4px 0 0 0' }}>
@@ -714,9 +1018,18 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
               </p>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: '16px', alignItems: 'start' }}>
               {projects.map((proj) => {
-                const progress = parseInt(proj.progress || 0, 10);
+                const projTasks = tasks.filter(
+                  (t) =>
+                    (t.project_id && proj.id && String(t.project_id).trim() === String(proj.id).trim()) ||
+                    (t.project_name && proj.name && String(t.project_name).trim().toLowerCase() === String(proj.name).trim().toLowerCase())
+                );
+                const computedProgress = projTasks.length > 0
+                  ? Math.round(projTasks.reduce((acc, t) => acc + (Number(t.progress) || 0), 0) / projTasks.length)
+                  : parseInt(proj.progress || 0, 10);
+                const progress = isNaN(computedProgress) ? 0 : computedProgress;
+                const isExpanded = expandedProjectId === proj.id;
                 return (
                   <div
                     key={proj.id}
@@ -725,10 +1038,11 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
                       padding: '20px',
                       borderRadius: '16px',
                       backgroundColor: '#ffffff',
-                      border: '1px solid #e2e8f0',
+                      border: isExpanded ? '1.5px solid #0f766e' : '1px solid #e2e8f0',
                       display: 'flex',
                       flexDirection: 'column',
-                      justifyContent: 'space-between',
+                      boxShadow: isExpanded ? '0 6px 20px rgba(15, 118, 110, 0.08)' : '0 2px 6px rgba(0,0,0,0.03)',
+                      transition: 'all 0.2s ease',
                     }}
                   >
                     <div>
@@ -877,7 +1191,7 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
                           padding: '8px 10px',
                           borderRadius: '8px',
                           border: '1px solid #cbd5e1',
-                          backgroundColor: expandedProjectIds.has(proj.id) ? '#f1f5f9' : '#ffffff',
+                          backgroundColor: isExpanded ? '#f1f5f9' : '#ffffff',
                           color: '#334155',
                           fontSize: '0.78rem',
                           fontWeight: '700',
@@ -886,8 +1200,8 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
                         }}
                       >
                         <Users size={14} color="#0f766e" />
-                        <span>{expandedProjectIds.has(proj.id) ? 'Hide Team' : 'View Assigned Employees'}</span>
-                        {expandedProjectIds.has(proj.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                        <span>{isExpanded ? 'Hide Team' : 'View Assigned Employees'}</span>
+                        {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                       </button>
 
                       <button
@@ -917,7 +1231,7 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
                     </div>
 
                     {/* Expandable Assigned Employees Tray */}
-                    {expandedProjectIds.has(proj.id) && (
+                    {isExpanded && (
                       <div
                         className="animate-fade-in"
                         style={{
@@ -957,6 +1271,9 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
                               const memberDetails = teamMembers.find(
                                 (m) => String(m.name).toLowerCase().trim() === String(empName).toLowerCase().trim()
                               );
+                              const empTasks = projTasks.filter(
+                                (t) => String(t.assigned_to || '').trim().toLowerCase() === String(empName || '').trim().toLowerCase()
+                              );
                               return (
                                 <div
                                   key={eIdx}
@@ -993,6 +1310,11 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
                                       </div>
                                       <div style={{ fontSize: '0.68rem', color: '#64748b' }}>
                                         {memberDetails?.designation || 'Staff'} &bull; {memberDetails?.department || proj.department || 'Operations'}
+                                        {empTasks.length > 0 && (
+                                          <span style={{ marginLeft: '6px', color: '#047857', fontWeight: '700' }}>
+                                            &bull; {empTasks[0].title} ({empTasks[0].progress || 0}%)
+                                          </span>
+                                        )}
                                       </div>
                                     </div>
                                   </div>
@@ -1111,7 +1433,7 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
       {/* ========================================================= */}
       {/* TAB 3: TASK MANAGEMENT (REQ 8, 9, 10, 11)                 */}
       {/* ========================================================= */}
-      {activeTab === 'tasks' && (
+      {(activeTab === 'tasks' || activeTab === 'create-task') && (
         <section className="animate-fade-in" style={{ marginBottom: '28px' }}>
           {/* Controls Bar */}
           <div
@@ -1187,7 +1509,7 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
           </div>
 
           {/* Tasks Table */}
-          <div style={{ backgroundColor: '#fff', borderRadius: '14px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+          <div className="travel-border-card" style={{ backgroundColor: '#fff', borderRadius: '14px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                 <thead>
@@ -1196,6 +1518,7 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
                     <th style={{ padding: '12px 16px', fontWeight: '700', color: '#475569' }}>Assigned Employee</th>
                     <th style={{ padding: '12px 16px', fontWeight: '700', color: '#475569' }}>Deadline</th>
                     <th style={{ padding: '12px 16px', fontWeight: '700', color: '#475569' }}>Priority</th>
+                    <th style={{ padding: '12px 16px', fontWeight: '700', color: '#475569' }}>Progress</th>
                     <th style={{ padding: '12px 16px', fontWeight: '700', color: '#475569' }}>Status</th>
                     <th style={{ padding: '12px 16px', fontWeight: '700', color: '#475569', textAlign: 'right' }}>Actions</th>
                   </tr>
@@ -1203,7 +1526,7 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
                 <tbody>
                   {filteredTasks.length === 0 ? (
                     <tr>
-                      <td colSpan={6} style={{ padding: '32px', textAlign: 'center', color: '#94a3b8' }}>
+                      <td colSpan={7} style={{ padding: '32px', textAlign: 'center', color: '#94a3b8' }}>
                         No tasks match the selected filters.
                       </td>
                     </tr>
@@ -1241,6 +1564,23 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
                           >
                             {t.priority}
                           </span>
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <div style={{ flex: 1, minWidth: '60px', maxWidth: '85px', height: '7px', backgroundColor: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
+                              <div
+                                style={{
+                                  width: `${Math.min(100, Math.max(0, Number(t.progress) || 0))}%`,
+                                  height: '100%',
+                                  backgroundColor: (Number(t.progress) || 0) >= 100 ? '#10b981' : '#0b3d2b',
+                                  transition: 'width 0.3s ease',
+                                }}
+                              />
+                            </div>
+                            <span style={{ fontSize: '0.78rem', fontWeight: '800', color: (Number(t.progress) || 0) >= 100 ? '#10b981' : '#0b3d2b', minWidth: '32px' }}>
+                              {t.progress || 0}%
+                            </span>
+                          </div>
                         </td>
                         <td style={{ padding: '12px 16px' }}>
                           <span
@@ -1319,9 +1659,492 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
       )}
 
       {/* ========================================================= */}
+      {/* TAB: SET TASK DEADLINES (REQ 10)                          */}
+      {/* ========================================================= */}
+      {activeTab === 'deadlines' && (
+        <section className="animate-fade-in" style={{ marginBottom: '28px' }}>
+          {/* Header */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+            <div>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: '800', color: '#0b3d2b', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Calendar size={22} color="#047857" />
+                Task Deadlines & Schedule Management
+              </h2>
+              <div style={{ fontSize: '0.82rem', color: '#64748b', marginTop: '2px' }}>
+                Track delivery timelines, adjust target completion dates, and manage sprint urgency
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onTabChange && onTabChange('create-task')}
+              style={{
+                padding: '8px 16px',
+                borderRadius: '8px',
+                border: 'none',
+                backgroundColor: '#0b3d2b',
+                color: '#fff',
+                fontWeight: '700',
+                fontSize: '0.85rem',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}
+            >
+              <PlusCircle size={15} />
+              + Create New Task
+            </button>
+          </div>
+
+          {/* Deadline KPI Metrics */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+            <div className="travel-border-card" style={{ backgroundColor: '#fff', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', borderLeft: '4px solid #0284c7' }}>
+              <div style={{ fontSize: '0.74rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Total Active Tasks</div>
+              <div style={{ fontSize: '1.6rem', fontWeight: '800', color: '#0b3d2b', marginTop: '4px' }}>{tasks.length}</div>
+              <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '2px' }}>Across all assigned projects</div>
+            </div>
+
+            <div className="travel-border-card" style={{ backgroundColor: '#fff', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', borderLeft: '4px solid #dc2626' }}>
+              <div style={{ fontSize: '0.74rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Overdue Deadlines</div>
+              <div style={{ fontSize: '1.6rem', fontWeight: '800', color: '#dc2626', marginTop: '4px' }}>
+                {tasks.filter((t) => t.status !== 'APPROVED' && getDeadlineUrgency(t.deadline).status === 'overdue').length}
+              </div>
+              <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '2px' }}>Requires immediate extension or rework</div>
+            </div>
+
+            <div className="travel-border-card" style={{ backgroundColor: '#fff', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', borderLeft: '4px solid #f59e0b' }}>
+              <div style={{ fontSize: '0.74rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Due Within 48 Hours</div>
+              <div style={{ fontSize: '1.6rem', fontWeight: '800', color: '#b45309', marginTop: '4px' }}>
+                {tasks.filter((t) => t.status !== 'APPROVED' && ['today', 'urgent'].includes(getDeadlineUrgency(t.deadline).status)).length}
+              </div>
+              <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '2px' }}>Critical sprint focus</div>
+            </div>
+
+            <div className="travel-border-card" style={{ backgroundColor: '#fff', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', borderLeft: '4px solid #10b981' }}>
+              <div style={{ fontSize: '0.74rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Completed On Time</div>
+              <div style={{ fontSize: '1.6rem', fontWeight: '800', color: '#047857', marginTop: '4px' }}>
+                {tasks.filter((t) => t.status === 'APPROVED').length}
+              </div>
+              <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '2px' }}>Verified & completed deliverables</div>
+            </div>
+          </div>
+
+          {/* Interactive Deadlines Table */}
+          <div className="travel-border-card" style={{ backgroundColor: '#fff', borderRadius: '14px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+            <div style={{ padding: '16px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: '1 1 240px', backgroundColor: '#f8fafc', padding: '6px 12px', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
+                <Search size={16} color="#64748b" />
+                <input
+                  type="text"
+                  placeholder="Filter tasks by name, assignee, or deadline..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: '0.85rem', width: '100%' }}
+                />
+              </div>
+            </div>
+
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                    <th style={{ padding: '12px 16px', fontWeight: '700', color: '#475569' }}>Task & Project</th>
+                    <th style={{ padding: '12px 16px', fontWeight: '700', color: '#475569' }}>Assigned Employee</th>
+                    <th style={{ padding: '12px 16px', fontWeight: '700', color: '#475569' }}>Current Deadline</th>
+                    <th style={{ padding: '12px 16px', fontWeight: '700', color: '#475569' }}>Timeline Status</th>
+                    <th style={{ padding: '12px 16px', fontWeight: '700', color: '#475569' }}>Priority</th>
+                    <th style={{ padding: '12px 16px', fontWeight: '700', color: '#475569' }}>Task Status</th>
+                    <th style={{ padding: '12px 16px', fontWeight: '700', color: '#475569', textAlign: 'right' }}>Update Deadline</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredTasks.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} style={{ padding: '32px', textAlign: 'center', color: '#94a3b8' }}>
+                        No tasks found matching your filter criteria.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredTasks.map((t) => {
+                      const urgency = getDeadlineUrgency(t.deadline);
+                      return (
+                        <tr key={t.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                          <td style={{ padding: '12px 16px' }}>
+                            <div style={{ fontWeight: '700', color: '#0b3d2b', fontSize: '0.9rem' }}>{t.title}</div>
+                            <div style={{ fontSize: '0.74rem', color: '#64748b' }}>Project: {t.project_name}</div>
+                            <div style={{ fontSize: '0.72rem', color: (Number(t.progress) || 0) >= 100 ? '#15803d' : '#0284c7', fontWeight: '700', marginTop: '2px' }}>
+                              Progress: {t.progress || 0}%
+                            </div>
+                          </td>
+                          <td style={{ padding: '12px 16px', color: '#1e293b', fontWeight: '600' }}>
+                            {t.assigned_to}
+                          </td>
+                          <td style={{ padding: '12px 16px' }}>
+                            <div style={{ fontWeight: '700', color: '#1e293b' }}>{t.deadline || 'No date set'}</div>
+                          </td>
+                          <td style={{ padding: '12px 16px' }}>
+                            <span
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                padding: '3px 8px',
+                                borderRadius: '6px',
+                                fontSize: '0.74rem',
+                                fontWeight: '700',
+                                backgroundColor: urgency.bg,
+                                color: urgency.color,
+                                border: `1px solid ${urgency.border || 'transparent'}`,
+                              }}
+                            >
+                              <Clock size={12} />
+                              {urgency.label}
+                            </span>
+                          </td>
+                          <td style={{ padding: '12px 16px' }}>
+                            <span
+                              style={{
+                                padding: '3px 8px',
+                                borderRadius: '4px',
+                                fontSize: '0.74rem',
+                                fontWeight: '700',
+                                backgroundColor: t.priority === 'Critical' ? '#fee2e2' : t.priority === 'High' ? '#fef3c7' : '#f1f5f9',
+                                color: t.priority === 'Critical' ? '#dc2626' : t.priority === 'High' ? '#b45309' : '#475569',
+                              }}
+                            >
+                              {t.priority}
+                            </span>
+                          </td>
+                          <td style={{ padding: '12px 16px' }}>
+                            <span style={{ fontSize: '0.74rem', fontWeight: '700', color: t.status === 'APPROVED' ? '#047857' : t.status === 'REWORK' ? '#dc2626' : '#1e293b' }}>
+                              {t.status}
+                            </span>
+                          </td>
+                          <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                            <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenDeadlineModal(t)}
+                                style={{
+                                  padding: '6px 12px',
+                                  borderRadius: '6px',
+                                  border: '1px solid #0b3d2b',
+                                  backgroundColor: '#ecfdf5',
+                                  color: '#0b3d2b',
+                                  fontWeight: '700',
+                                  fontSize: '0.78rem',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                }}
+                              >
+                                <Calendar size={13} />
+                                Set Deadline
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleQuickExtendDeadline(t, 2)}
+                                title="Quick extension +2 days"
+                                style={{
+                                  padding: '6px 8px',
+                                  borderRadius: '6px',
+                                  border: '1px solid #cbd5e1',
+                                  backgroundColor: '#fff',
+                                  color: '#475569',
+                                  fontWeight: '700',
+                                  fontSize: '0.74rem',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                +2d
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleQuickExtendDeadline(t, 7)}
+                                title="Quick extension +7 days"
+                                style={{
+                                  padding: '6px 8px',
+                                  borderRadius: '6px',
+                                  border: '1px solid #cbd5e1',
+                                  backgroundColor: '#fff',
+                                  color: '#475569',
+                                  fontWeight: '700',
+                                  fontSize: '0.74rem',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                +7d
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* ========================================================= */}
+      {/* TAB: MONITOR EMPLOYEE WORK (REQ 11)                       */}
+      {/* ========================================================= */}
+      {activeTab === 'monitor-work' && (
+        <section className="animate-fade-in" style={{ marginBottom: '28px' }}>
+          {/* Header */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+            <div>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: '800', color: '#0b3d2b', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Activity size={22} color="#047857" />
+                Monitor Employee Work & Progress
+              </h2>
+              <div style={{ fontSize: '0.82rem', color: '#64748b', marginTop: '2px' }}>
+                Real-time visibility into team member workloads, daily deliverables, and sprint activity
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                type="button"
+                onClick={() => onTabChange && onTabChange('work-updates')}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  backgroundColor: '#ffffff',
+                  color: '#334155',
+                  fontWeight: '700',
+                  fontSize: '0.82rem',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <FileText size={14} />
+                View Daily Logs
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Stats Grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+            <div className="travel-border-card" style={{ backgroundColor: '#fff', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+              <div style={{ fontSize: '0.74rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Active Team Members</div>
+              <div style={{ fontSize: '1.6rem', fontWeight: '800', color: '#0b3d2b', marginTop: '4px' }}>{teamMembers.length}</div>
+              <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '2px' }}>Currently in roster</div>
+            </div>
+
+            <div className="travel-border-card" style={{ backgroundColor: '#fff', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+              <div style={{ fontSize: '0.74rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Tasks In Progress</div>
+              <div style={{ fontSize: '1.6rem', fontWeight: '800', color: '#0284c7', marginTop: '4px' }}>
+                {tasks.filter((t) => t.status === 'IN_PROGRESS' || t.status === 'In Progress').length}
+              </div>
+              <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '2px' }}>Active execution</div>
+            </div>
+
+            <div className="travel-border-card" style={{ backgroundColor: '#fff', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+              <div style={{ fontSize: '0.74rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Awaiting Review</div>
+              <div style={{ fontSize: '1.6rem', fontWeight: '800', color: '#d97706', marginTop: '4px' }}>{submittedTasks.length}</div>
+              <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '2px' }}>Deliverables ready for TL check</div>
+            </div>
+
+            <div className="travel-border-card" style={{ backgroundColor: '#fff', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+              <div style={{ fontSize: '0.74rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Daily Updates Logged</div>
+              <div style={{ fontSize: '1.6rem', fontWeight: '800', color: '#047857', marginTop: '4px' }}>{workUpdates.length}</div>
+              <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '2px' }}>Submitted work records</div>
+            </div>
+          </div>
+
+          {/* Employee Workload Cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: '16px' }}>
+            {teamMembers.length === 0 ? (
+              <div className="travel-border-card" style={{ gridColumn: '1 / -1', padding: '40px', textAlign: 'center', backgroundColor: '#fff', borderRadius: '14px', color: '#94a3b8' }}>
+                No active team members found in the current roster.
+              </div>
+            ) : (
+              teamMembers.map((member) => {
+                const memberTasks = tasks.filter(
+                  (t) =>
+                    String(t.assigned_to || '').trim().toLowerCase() === String(member.name || '').trim().toLowerCase()
+                );
+                const inProgressCount = memberTasks.filter((t) => t.status === 'IN_PROGRESS' || t.status === 'In Progress').length;
+                const submittedCount = memberTasks.filter((t) => t.status === 'SUBMITTED' || t.status === 'In Review').length;
+                const completedCount = memberTasks.filter((t) => t.status === 'APPROVED').length;
+                const latestUpdate = workUpdates.find(
+                  (u) => String(u.employee_name || '').trim().toLowerCase() === String(member.name || '').trim().toLowerCase()
+                );
+
+                return (
+                  <div
+                    key={member.id || member.email}
+                    className="travel-border-card"
+                    style={{
+                      backgroundColor: '#ffffff',
+                      borderRadius: '14px',
+                      border: '1px solid #e2e8f0',
+                      padding: '18px',
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.03)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'space-between',
+                    }}
+                  >
+                    <div>
+                      {/* Top profile row */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
+                        <div
+                          style={{
+                            width: '42px',
+                            height: '42px',
+                            borderRadius: '10px',
+                            backgroundColor: '#0b3d2b',
+                            color: '#ffffff',
+                            fontWeight: '800',
+                            fontSize: '1.1rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            overflow: 'hidden',
+                            flexShrink: 0,
+                          }}
+                        >
+                          {member.photoUrl || member.profile_photo || member.profilePhoto ? (
+                            <img
+                              src={member.photoUrl || member.profile_photo || member.profilePhoto}
+                              alt={member.name}
+                              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                            />
+                          ) : (
+                            member.name?.charAt(0)?.toUpperCase() || 'E'
+                          )}
+                        </div>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ fontWeight: '800', color: '#0b3d2b', fontSize: '0.95rem' }}>{member.name}</div>
+                          <div style={{ fontSize: '0.74rem', color: '#64748b' }}>
+                            {member.employee_id || member.id} &bull; {member.designation || 'Staff'}
+                          </div>
+                        </div>
+                        <span
+                          style={{
+                            padding: '2px 8px',
+                            borderRadius: '999px',
+                            fontSize: '0.7rem',
+                            fontWeight: '700',
+                            backgroundColor: '#ecfdf5',
+                            color: '#047857',
+                          }}
+                        >
+                          {member.status || 'Active'}
+                        </span>
+                      </div>
+
+                      {/* Workload badges */}
+                      <div style={{ display: 'flex', gap: '6px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '0.72rem', padding: '3px 8px', borderRadius: '4px', backgroundColor: '#f1f5f9', color: '#475569', fontWeight: '700' }}>
+                          Total: {memberTasks.length}
+                        </span>
+                        <span style={{ fontSize: '0.72rem', padding: '3px 8px', borderRadius: '4px', backgroundColor: '#e0f2fe', color: '#0369a1', fontWeight: '700' }}>
+                          In Progress: {inProgressCount}
+                        </span>
+                        <span style={{ fontSize: '0.72rem', padding: '3px 8px', borderRadius: '4px', backgroundColor: '#fef3c7', color: '#b45309', fontWeight: '700' }}>
+                          Review: {submittedCount}
+                        </span>
+                        <span style={{ fontSize: '0.72rem', padding: '3px 8px', borderRadius: '4px', backgroundColor: '#ecfdf5', color: '#047857', fontWeight: '700' }}>
+                          Done: {completedCount}
+                        </span>
+                      </div>
+
+                      {/* Active Tasks snippet */}
+                      <div style={{ backgroundColor: '#f8fafc', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '12px' }}>
+                        <div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', marginBottom: '6px' }}>
+                          Active Tasks ({memberTasks.filter((t) => t.status !== 'APPROVED').length})
+                        </div>
+                        {memberTasks.filter((t) => t.status !== 'APPROVED').length === 0 ? (
+                          <div style={{ fontSize: '0.78rem', color: '#94a3b8' }}>No pending tasks right now.</div>
+                        ) : (
+                          memberTasks
+                            .filter((t) => t.status !== 'APPROVED')
+                            .slice(0, 2)
+                            .map((t) => (
+                              <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.78rem', marginBottom: '5px' }}>
+                                <span style={{ fontWeight: '600', color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '170px' }}>
+                                  • {t.title}
+                                </span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                                  <span style={{ fontSize: '0.7rem', fontWeight: '800', color: (Number(t.progress) || 0) >= 100 ? '#15803d' : '#047857', backgroundColor: (Number(t.progress) || 0) >= 100 ? '#dcfce7' : '#ecfdf5', padding: '1px 6px', borderRadius: '4px' }}>
+                                    {t.progress || 0}%
+                                  </span>
+                                  <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{t.deadline}</span>
+                                </div>
+                              </div>
+                            ))
+                        )}
+                      </div>
+
+                      {/* Latest Work Update */}
+                      {latestUpdate && (
+                        <div style={{ fontSize: '0.75rem', color: '#475569', marginBottom: '12px', fontStyle: 'italic' }}>
+                          Latest log: "{latestUpdate.summary || latestUpdate.task_summary}" ({latestUpdate.hours_worked || 8}h)
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Actions */}
+                    <div style={{ display: 'flex', gap: '8px', borderTop: '1px solid #f1f5f9', paddingTop: '10px' }}>
+                      <button
+                        type="button"
+                        onClick={() => openCreateTaskForProject(projects[0], member.name)}
+                        style={{
+                          flex: 1,
+                          padding: '7px 10px',
+                          borderRadius: '6px',
+                          border: 'none',
+                          backgroundColor: '#0b3d2b',
+                          color: '#fff',
+                          fontWeight: '700',
+                          fontSize: '0.76rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '4px',
+                        }}
+                      >
+                        <PlusCircle size={13} />
+                        Assign Task
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openWorkUpdateModal(projects[0]?.id, member.name)}
+                        style={{
+                          padding: '7px 10px',
+                          borderRadius: '6px',
+                          border: '1px solid #cbd5e1',
+                          backgroundColor: '#fff',
+                          color: '#334155',
+                          fontWeight: '700',
+                          fontSize: '0.76rem',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Log Update
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* ========================================================= */}
       {/* TAB 4: REVIEW SUBMITTED TASKS & REWORK (REQ 13, 14, 15)   */}
       {/* ========================================================= */}
-      {activeTab === 'submitted-tasks' && (
+      {(activeTab === 'submitted-tasks' || activeTab === 'task-review') && (
         <section className="animate-fade-in" style={{ marginBottom: '28px' }}>
           <div style={{ marginBottom: '16px' }}>
             <h2 style={{ fontSize: '1.2rem', fontWeight: '800', color: '#0b3d2b', margin: 0 }}>
@@ -1333,7 +2156,7 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
           </div>
 
           {submittedTasks.length === 0 ? (
-            <div style={{ padding: '40px', textAlign: 'center', backgroundColor: '#fff', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+            <div className="travel-border-card" style={{ padding: '40px', textAlign: 'center', backgroundColor: '#fff', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
               <CheckCircle2 size={36} color="#10b981" style={{ margin: '0 auto 10px auto' }} />
               <div style={{ fontSize: '0.95rem', fontWeight: '700', color: '#334155' }}>
                 All Task Submissions Reviewed!
@@ -1343,10 +2166,11 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
               </p>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '16px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))', gap: '16px' }}>
               {submittedTasks.map((task) => (
                 <div
                   key={task.id}
+                  className="travel-border-card"
                   style={{
                     backgroundColor: '#fff',
                     borderRadius: '14px',
@@ -1415,7 +2239,7 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
                       }}
                     >
                       <Check size={14} />
-                      14. Approve Task
+                      Approve Task
                     </button>
 
                     <button
@@ -1437,7 +2261,7 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
                       }}
                     >
                       <XCircle size={14} />
-                      14. Reject Task
+                      Reject Task
                     </button>
 
                     <button
@@ -1459,7 +2283,7 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
                       }}
                     >
                       <RotateCcw size={14} />
-                      15. Assign Rework
+                      Assign Rework
                     </button>
                   </div>
                 </div>
@@ -1470,87 +2294,151 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
       )}
 
       {/* ========================================================= */}
-      {/* TAB 5: DAILY WORK UPDATES (REQ 11, 12)                    */}
+      {/* TAB 5: DAILY WORK UPDATES (Screenshots 1, 2, 3)             */}
       {/* ========================================================= */}
       {activeTab === 'work-updates' && (
         <section className="animate-fade-in" style={{ marginBottom: '28px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+          <WorkUpdatesDrilldown onExit={() => onTabChange && onTabChange('projects')} />
+        </section>
+      )}
+
+      {/* ========================================================= */}
+      {/* TAB: ASSIGN & MONITOR REWORK (REQ 15)                     */}
+      {/* ========================================================= */}
+      {activeTab === 'rework' && (
+        <section className="animate-fade-in" style={{ marginBottom: '28px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
             <div>
-              <h2 style={{ fontSize: '1.2rem', fontWeight: '800', color: '#0b3d2b', margin: 0 }}>
-                Daily Work Updates & Activity Logs
+              <h2 style={{ fontSize: '1.25rem', fontWeight: '800', color: '#0b3d2b', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <RotateCcw size={22} color="#dc2626" />
+                Assign & Monitor Rework Deliverables
               </h2>
-              <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
-                Monitor daily hours logged and progress milestones submitted by your workforce
+              <div style={{ fontSize: '0.82rem', color: '#64748b', marginTop: '2px' }}>
+                Track rejected tasks, provide constructive revision notes, and enforce revised milestones
               </div>
             </div>
             <button
               type="button"
-              onClick={() => setIsWorkUpdateModalOpen(true)}
+              onClick={() => onTabChange && onTabChange('task-review')}
               style={{
                 padding: '8px 14px',
                 borderRadius: '8px',
-                border: 'none',
-                backgroundColor: '#0b3d2b',
-                color: '#fff',
-                fontSize: '0.825rem',
+                border: '1px solid #cbd5e1',
+                backgroundColor: '#ffffff',
+                color: '#334155',
                 fontWeight: '700',
+                fontSize: '0.82rem',
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',
               }}
             >
-              <PlusCircle size={14} />
-              + Log Daily Update
+              <CheckCircle2 size={14} />
+              Open Review Queue ({submittedTasks.length})
             </button>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {workUpdates.length === 0 ? (
-              <div style={{ padding: '32px', textAlign: 'center', backgroundColor: '#fff', borderRadius: '12px', color: '#94a3b8', fontSize: '0.85rem' }}>
-                No daily work updates logged yet.
+          {/* Rework items grid */}
+          {reworkTasks.length === 0 ? (
+            <div className="travel-border-card" style={{ padding: '48px', textAlign: 'center', backgroundColor: '#fff', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+              <CheckCircle2 size={40} color="#10b981" style={{ margin: '0 auto 12px auto' }} />
+              <div style={{ fontSize: '1.05rem', fontWeight: '800', color: '#1e293b' }}>
+                Zero Active Rework Items!
               </div>
-            ) : (
-              workUpdates.map((update) => (
+              <p style={{ fontSize: '0.85rem', color: '#64748b', maxWidth: '420px', margin: '6px auto 0 auto' }}>
+                All deliverables currently meet acceptance standards. When a submitted task is rejected with rework instructions, it will automatically appear here.
+              </p>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))', gap: '16px' }}>
+              {reworkTasks.map((t) => (
                 <div
-                  key={update.id}
+                  key={t.id}
+                  className="travel-border-card"
                   style={{
                     backgroundColor: '#fff',
-                    borderRadius: '12px',
-                    border: '1px solid #e2e8f0',
-                    padding: '16px 20px',
+                    borderRadius: '14px',
+                    border: '2px solid #fecaca',
+                    padding: '20px',
+                    boxShadow: '0 4px 12px rgba(220,38,38,0.04)',
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: '6px',
+                    justifyContent: 'space-between',
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ fontSize: '0.9rem', fontWeight: '800', color: '#1e293b' }}>
-                        {update.employee_name}
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '0.72rem', padding: '2px 8px', borderRadius: '4px', backgroundColor: '#fee2e2', color: '#dc2626', fontWeight: '800' }}>
+                        UNDER REVISION
                       </span>
-                      <span style={{ fontSize: '0.74rem', padding: '2px 8px', borderRadius: '4px', backgroundColor: '#f1f5f9', color: '#475569', fontWeight: '600' }}>
-                        {update.project_name}
+                      <span style={{ fontSize: '0.76rem', color: '#64748b' }}>
+                        Revised Due: <strong>{t.revised_deadline || t.deadline}</strong>
                       </span>
                     </div>
-                    <div style={{ fontSize: '0.78rem', color: '#64748b' }}>
-                      {update.date} &bull; <strong>{update.hours_worked || 8} hrs logged</strong>
+
+                    <h3 style={{ fontSize: '1.05rem', fontWeight: '800', color: '#1e293b', margin: '0 0 6px 0' }}>
+                      {t.title}
+                    </h3>
+                    <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '10px' }}>
+                      Assignee: <strong style={{ color: '#0b3d2b' }}>{t.assigned_to}</strong> &bull; Project: {t.project_name}
+                    </div>
+
+                    {/* Rework instructions */}
+                    <div style={{ padding: '12px', backgroundColor: '#fef2f2', borderRadius: '8px', border: '1px solid #fee2e2', marginBottom: '16px' }}>
+                      <div style={{ fontSize: '0.72rem', fontWeight: '800', color: '#b91c1c', marginBottom: '4px' }}>
+                        REWORK INSTRUCTIONS:
+                      </div>
+                      <div style={{ fontSize: '0.82rem', color: '#7f1d1d' }}>
+                        {t.rework_notes || t.feedback || 'Please update code implementation according to team leader remarks.'}
+                      </div>
                     </div>
                   </div>
 
-                  <p style={{ fontSize: '0.85rem', color: '#334155', margin: '4px 0 0 0', lineHeight: '1.4' }}>
-                    {update.summary}
-                  </p>
-
-                  {update.blockers && update.blockers !== 'None' && (
-                    <div style={{ fontSize: '0.76rem', color: '#b91c1c', backgroundColor: '#fef2f2', padding: '4px 8px', borderRadius: '4px', alignSelf: 'flex-start', marginTop: '4px' }}>
-                      Blocker: {update.blockers}
-                    </div>
-                  )}
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => handleApproveTask(t)}
+                      style={{
+                        flex: 1,
+                        padding: '9px',
+                        borderRadius: '8px',
+                        border: 'none',
+                        backgroundColor: '#10b981',
+                        color: '#fff',
+                        fontWeight: '700',
+                        fontSize: '0.82rem',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px',
+                      }}
+                    >
+                      <Check size={14} />
+                      Approve Revision
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenReworkModal(t)}
+                      style={{
+                        padding: '9px 12px',
+                        borderRadius: '8px',
+                        border: '1px solid #cbd5e1',
+                        backgroundColor: '#fff',
+                        color: '#334155',
+                        fontWeight: '700',
+                        fontSize: '0.82rem',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Update Notes
+                    </button>
+                  </div>
                 </div>
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          )}
         </section>
       )}
 
@@ -1561,14 +2449,14 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
         <section className="animate-fade-in" style={{ marginBottom: '28px' }}>
           <div style={{ marginBottom: '16px' }}>
             <h2 style={{ fontSize: '1.2rem', fontWeight: '800', color: '#0b3d2b', margin: 0 }}>
-              16. Team Performance Scorecard
+              Team Performance Scorecard
             </h2>
             <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
               Employee task velocity, completion ratios, and rework frequency
             </div>
           </div>
 
-          <div style={{ backgroundColor: '#fff', borderRadius: '14px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+          <div className="travel-border-card" style={{ backgroundColor: '#fff', borderRadius: '14px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                 <thead>
@@ -1653,41 +2541,88 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
         <form onSubmit={handleCreateTask}>
           <div style={{ marginBottom: '14px' }}>
             <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#334155', marginBottom: '4px' }}>
-              Project
+              Project *
             </label>
-            <div
-              style={{
-                padding: '9px 12px',
-                backgroundColor: '#f8fafc',
-                borderRadius: '8px',
-                border: '1px solid #cbd5e1',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-              }}
-            >
-              <div>
-                <span style={{ fontWeight: 800, color: '#0b3d2b', fontSize: '0.88rem' }}>
-                  {selectedProjectForTask?.name || 'Selected Project'}
-                </span>
-                <span style={{ fontSize: '0.75rem', color: '#64748b', marginLeft: '8px' }}>
-                  ({selectedProjectForTask?.department || 'Operations'})
-                </span>
+            {projects.length > 1 ? (
+              <div style={{ position: 'relative' }}>
+                <select
+                  value={taskForm.project_id}
+                  onChange={(e) => handleProjectSelectInTaskForm(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 36px 10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1',
+                    fontSize: '0.875rem',
+                    fontWeight: '700',
+                    color: '#0b3d2b',
+                    backgroundColor: '#f8fafc',
+                    cursor: 'pointer',
+                    outline: 'none',
+                    appearance: 'none',
+                    WebkitAppearance: 'none',
+                    MozAppearance: 'none',
+                  }}
+                  required
+                >
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name || p.title} ({p.department || 'Operations'}) • {p.id}
+                    </option>
+                  ))}
+                </select>
+                <div
+                  style={{
+                    position: 'absolute',
+                    right: '12px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    pointerEvents: 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    color: '#047857',
+                  }}
+                >
+                  <ChevronDown size={18} />
+                </div>
               </div>
-              <span
+            ) : (
+              <div
                 style={{
-                  fontSize: '0.72rem',
-                  fontWeight: 700,
-                  backgroundColor: '#ecfdf5',
-                  color: '#065f46',
-                  padding: '2px 8px',
-                  borderRadius: '6px',
-                  border: '1px solid #a7f3d0',
+                  padding: '9px 12px',
+                  backgroundColor: '#f8fafc',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
                 }}
               >
-                {selectedProjectForTask?.id || ''}
-              </span>
-            </div>
+                <div>
+                  <span style={{ fontWeight: 800, color: '#0b3d2b', fontSize: '0.88rem' }}>
+                    {selectedProjectForTask?.name || selectedProjectForTask?.title || projects[0]?.name || 'Assigned Project'}
+                  </span>
+                  <span style={{ fontSize: '0.75rem', color: '#64748b', marginLeft: '8px' }}>
+                    ({selectedProjectForTask?.department || projects[0]?.department || 'Operations'})
+                  </span>
+                </div>
+                {(selectedProjectForTask?.id || projects[0]?.id) && (
+                  <span
+                    style={{
+                      fontSize: '0.72rem',
+                      fontWeight: 700,
+                      backgroundColor: '#ecfdf5',
+                      color: '#065f46',
+                      padding: '2px 8px',
+                      borderRadius: '6px',
+                      border: '1px solid #a7f3d0',
+                    }}
+                  >
+                    {selectedProjectForTask?.id || projects[0]?.id}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           <div style={{ marginBottom: '14px' }}>
@@ -1730,11 +2665,11 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
               >
                 {availableEmployeesForTask.length === 0 ? (
                   <option value="" disabled>
-                    -- No employees assigned to this project yet --
+                    -- No employees found in roster --
                   </option>
                 ) : (
                   availableEmployeesForTask.map((m) => (
-                    <option key={m.id} value={m.name}>
+                    <option key={m.id || m.name} value={m.name}>
                       {m.name} ({m.department || 'Operations'})
                     </option>
                   ))
@@ -1797,9 +2732,20 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
             </button>
             <button
               type="submit"
-              style={{ padding: '8px 18px', borderRadius: '8px', border: 'none', backgroundColor: '#0b3d2b', color: '#fff', fontSize: '0.85rem', fontWeight: '700', cursor: 'pointer' }}
+              disabled={isSubmittingTask}
+              style={{
+                padding: '8px 18px',
+                borderRadius: '8px',
+                border: 'none',
+                backgroundColor: '#0b3d2b',
+                color: '#fff',
+                fontSize: '0.85rem',
+                fontWeight: '700',
+                cursor: isSubmittingTask ? 'not-allowed' : 'pointer',
+                opacity: isSubmittingTask ? 0.7 : 1,
+              }}
             >
-              Create & Assign Task
+              {isSubmittingTask ? 'Creating...' : 'Create & Assign Task'}
             </button>
           </div>
         </form>
@@ -1939,6 +2885,10 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
               style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.875rem' }}
               required
             >
+              {projects.length === 0 && <option value="">No projects available</option>}
+              {updateForm.project_id && !projects.some((p) => p.id === updateForm.project_id) && (
+                <option value={updateForm.project_id}>{updateForm.project_id}</option>
+              )}
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
@@ -1958,8 +2908,14 @@ export default function TeamLeaderDashboard({ activeTab = 'projects', onTabChang
                 style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.875rem' }}
                 required
               >
+                {teamMembers.length === 0 && updateForm.employee_name && (
+                  <option value={updateForm.employee_name}>{updateForm.employee_name}</option>
+                )}
+                {updateForm.employee_name && !teamMembers.some((m) => m.name === updateForm.employee_name) && (
+                  <option value={updateForm.employee_name}>{updateForm.employee_name}</option>
+                )}
                 {teamMembers.map((m) => (
-                  <option key={m.id} value={m.name}>
+                  <option key={m.id || m.name} value={m.name}>
                     {m.name}
                   </option>
                 ))}

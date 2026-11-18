@@ -33,11 +33,29 @@ export const logoutWithFirebase = async () => {
   await firebaseSignOut(auth);
 };
 
-export const getFirebaseIdToken = async () => {
+export const getFirebaseIdToken = async (forceRefresh = false) => {
+  if (typeof auth.authStateReady === 'function') {
+    try {
+      await auth.authStateReady();
+    } catch {
+      // ignore
+    }
+  }
   if (auth.currentUser) {
-    return await auth.currentUser.getIdToken();
+    return await auth.currentUser.getIdToken(forceRefresh);
   }
   return null;
+};
+
+export const getCurrentFirebaseUser = async () => {
+  if (typeof auth.authStateReady === 'function') {
+    try {
+      await auth.authStateReady();
+    } catch {
+      // ignore
+    }
+  }
+  return auth.currentUser || null;
 };
 
 export const sendResetPassword = async (email) => {

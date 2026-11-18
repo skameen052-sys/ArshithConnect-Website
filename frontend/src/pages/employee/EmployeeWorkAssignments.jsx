@@ -48,6 +48,43 @@ export default function EmployeeWorkAssignments() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
 
+  const openPdfViewer = (pdfData, pdfName = 'Project_Proposal.pdf') => {
+    if (!pdfData) return;
+    if (pdfData.startsWith('data:application/pdf') || pdfData.startsWith('data:')) {
+      const pdfWindow = window.open('', '_blank');
+      if (pdfWindow) {
+        pdfWindow.document.write(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>${pdfName}</title>
+              <style>
+                body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #525659; font-family: system-ui, -apple-system, sans-serif; }
+                .topbar { display: flex; align-items: center; justify-content: space-between; background: #0b3d2b; color: #ffffff; padding: 10px 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
+                .topbar .title { font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+                .topbar a.download-btn { background: #0f766e; color: #ffffff; padding: 6px 14px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 700; transition: background 0.15s; }
+                .topbar a.download-btn:hover { background: #14b8a6; }
+                iframe { border: none; width: 100%; height: calc(100% - 48px); }
+              </style>
+            </head>
+            <body>
+              <div class="topbar">
+                <div class="title">📄 ${pdfName}</div>
+                <a class="download-btn" href="${pdfData}" download="${pdfName}">⬇ Download Proposal PDF</a>
+              </div>
+              <iframe src="${pdfData}" type="application/pdf"></iframe>
+            </body>
+          </html>
+        `);
+        pdfWindow.document.close();
+      } else {
+        window.open(pdfData, '_blank');
+      }
+    } else {
+      window.open(pdfData, '_blank');
+    }
+  };
+
   // Filters for Tasks tab
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [priorityFilter, setPriorityFilter] = useState('ALL');
@@ -102,9 +139,9 @@ export default function EmployeeWorkAssignments() {
   };
 
   // Fetch all employee tasks & sprint details
-  const fetchAllData = useCallback(async () => {
+  const fetchAllData = useCallback(async (silent = false) => {
     try {
-      setIsLoading(true);
+      if (!silent) setIsLoading(true);
       const [tasksRes, teamRes, dailyRes, notifRes, perfRes, deadRes] = await Promise.allSettled([
         employeeTaskService.getAssignedTasks(),
         employeeTaskService.getMyTeam(),
@@ -166,17 +203,20 @@ export default function EmployeeWorkAssignments() {
   // Action: Save Task Status (Req 11)
   const handleSaveStatus = async (e) => {
     e.preventDefault();
-    if (!selectedTaskForStatus) return;
+    if (!selectedTaskForStatus || isSubmitting) return;
     try {
       setIsSubmitting(true);
-      await employeeTaskService.updateTaskStatus(selectedTaskForStatus.id, {
+      const updated = await employeeTaskService.updateTaskStatus(selectedTaskForStatus.id, {
         status: newStatus,
         progress: Number(newProgress),
         notes: statusNotes,
       });
+      if (updated && updated.id) {
+        setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+      }
       showToast(`Status updated for task "${selectedTaskForStatus.title}".`);
       setStatusModalOpen(false);
-      fetchAllData();
+      fetchAllData(true);
     } catch (err) {
       alert(err.response?.data?.detail || 'Failed to update task status.');
     } finally {
@@ -195,21 +235,24 @@ export default function EmployeeWorkAssignments() {
   // Action: Submit Deliverables & Proof (Req 12, 13)
   const handleSubmitDeliverables = async (e) => {
     e.preventDefault();
-    if (!selectedTaskForDeliverables) return;
+    if (!selectedTaskForDeliverables || isSubmitting) return;
     if (!deliverableNotes.trim()) {
       alert('Please enter a brief summary of the deliverable work completed.');
       return;
     }
     try {
       setIsSubmitting(true);
-      await employeeTaskService.submitDeliverables(selectedTaskForDeliverables.id, {
+      const updated = await employeeTaskService.submitDeliverables(selectedTaskForDeliverables.id, {
         submission_notes: deliverableNotes.trim(),
         attachments: deliverableAttachments,
         progress: 100,
       });
+      if (updated && updated.id) {
+        setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+      }
       showToast(`Deliverables submitted for "${selectedTaskForDeliverables.title}". Sent to Team Leader for review.`);
       setDeliverablesModalOpen(false);
-      fetchAllData();
+      fetchAllData(true);
     } catch (err) {
       alert(err.response?.data?.detail || 'Failed to submit deliverables.');
     } finally {
@@ -229,21 +272,24 @@ export default function EmployeeWorkAssignments() {
   // Action: Resubmit Task after Rework (Req 15)
   const handleResubmitTask = async (e) => {
     e.preventDefault();
-    if (!selectedTaskForResubmit) return;
+    if (!selectedTaskForResubmit || isSubmitting) return;
     if (!resubmitNotes.trim()) {
       alert('Please explain the modifications and fixes made for rework.');
       return;
     }
     try {
       setIsSubmitting(true);
-      await employeeTaskService.resubmitTask(selectedTaskForResubmit.id, {
+      const updated = await employeeTaskService.resubmitTask(selectedTaskForResubmit.id, {
         resubmission_notes: resubmitNotes.trim(),
         attachments: resubmitAttachments,
         progress: Number(resubmitProgress),
       });
+      if (updated && updated.id) {
+        setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+      }
       showToast(`Task "${selectedTaskForResubmit.title}" resubmitted to Team Leader review queue.`);
       setResubmitModalOpen(false);
-      fetchAllData();
+      fetchAllData(true);
     } catch (err) {
       alert(err.response?.data?.detail || 'Failed to resubmit task.');
     } finally {
@@ -562,7 +608,7 @@ export default function EmployeeWorkAssignments() {
               </p>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '20px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 350px), 1fr))', gap: '20px' }}>
               {filteredTasks.map((task) => {
                 const isRework = task.status === 'REWORK';
                 const isApproved = task.status === 'APPROVED';
@@ -571,6 +617,7 @@ export default function EmployeeWorkAssignments() {
                 return (
                   <div
                     key={task.id}
+                    className="travel-border-card"
                     style={{
                       backgroundColor: '#ffffff',
                       border: isRework ? '2px solid #f97316' : '1px solid #e2e8f0',
@@ -770,6 +817,30 @@ export default function EmployeeWorkAssignments() {
                         />
                       </div>
 
+                      {/* Proposal PDF View Button */}
+                      {task.proposal_pdf && (
+                        <div style={{ marginBottom: '12px' }}>
+                          <button
+                            type="button"
+                            onClick={() => openPdfViewer(task.proposal_pdf, task.proposal_pdf_name || `${task.project_name || task.title} - Proposal.pdf`)}
+                            style={{
+                              width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                              padding: '8px 12px', borderRadius: '10px', border: '1px solid #fecdd3',
+                              backgroundColor: '#fff1f2', color: '#be123c', fontWeight: 700, fontSize: '0.8rem',
+                              cursor: 'pointer', transition: 'all 0.15s'
+                            }}
+                          >
+                            <FileText size={15} color="#e11d48" />
+                            <span>View Proposal PDF</span>
+                            {task.proposal_pdf_name && (
+                              <span style={{ fontSize: '0.72rem', fontWeight: 500, color: '#9f1239', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                ({task.proposal_pdf_name})
+                              </span>
+                            )}
+                          </button>
+                        </div>
+                      )}
+
                       {/* Lead Info & Due Date */}
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: '#64748b', marginBottom: '14px' }}>
                         <span>Lead: <strong style={{ color: '#1e293b' }}>{task.team_leader_name || 'Team Lead'}</strong></span>
@@ -877,7 +948,7 @@ export default function EmployeeWorkAssignments() {
         <div className="animate-fade-in">
           {/* Urgency Summary Cards */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px' }}>
-            <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '20px', border: '1px solid #fee2e2', borderLeft: '5px solid #dc2626' }}>
+            <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '20px', border: '1px solid #fee2e2', borderLeft: '5px solid #dc2626' }}>
               <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#dc2626', textTransform: 'uppercase' }}>Overdue Tasks</div>
               <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#991b1b', marginTop: '4px' }}>
                 {deadlinesData?.overdue_count || 0}
@@ -885,7 +956,7 @@ export default function EmployeeWorkAssignments() {
               <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px' }}>Require immediate submission</div>
             </div>
 
-            <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '20px', border: '1px solid #fef3c7', borderLeft: '5px solid #d97706' }}>
+            <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '20px', border: '1px solid #fef3c7', borderLeft: '5px solid #d97706' }}>
               <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#d97706', textTransform: 'uppercase' }}>Due Today</div>
               <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#92400e', marginTop: '4px' }}>
                 {deadlinesData?.due_today_count || 0}
@@ -893,7 +964,7 @@ export default function EmployeeWorkAssignments() {
               <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px' }}>Submission deadline tonight</div>
             </div>
 
-            <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '20px', border: '1px solid #fef9c3', borderLeft: '5px solid #eab308' }}>
+            <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '20px', border: '1px solid #fef9c3', borderLeft: '5px solid #eab308' }}>
               <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#ca8a04', textTransform: 'uppercase' }}>Due This Week</div>
               <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#854d0e', marginTop: '4px' }}>
                 {deadlinesData?.due_this_week_count || 0}
@@ -901,7 +972,7 @@ export default function EmployeeWorkAssignments() {
               <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px' }}>Upcoming milestones</div>
             </div>
 
-            <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '20px', border: '1px solid #dcfce7', borderLeft: '5px solid #10b981' }}>
+            <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '20px', border: '1px solid #dcfce7', borderLeft: '5px solid #10b981' }}>
               <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#047857', textTransform: 'uppercase' }}>Completed On-Time</div>
               <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#065f46', marginTop: '4px' }}>
                 {deadlinesData?.completed_count || 0}
@@ -911,7 +982,7 @@ export default function EmployeeWorkAssignments() {
           </div>
 
           {/* Detailed Timeline Table */}
-          <div style={{ backgroundColor: '#ffffff', borderRadius: '18px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
+          <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '18px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
             <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0b3d2b', marginBottom: '16px' }}>
               Sprint Deliverables Timeline & Urgency
             </h3>
@@ -1011,9 +1082,9 @@ export default function EmployeeWorkAssignments() {
       {/* TAB 3: 12. SUBMIT DAILY WORK & 13. UPLOAD SCREENSHOTS (Req 12 & 13)       */}
       {/* ========================================================================= */}
       {activeTab === 'daily-work' && (
-        <div className="animate-fade-in" style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 420px) 1fr', gap: '24px' }}>
+        <div className="animate-fade-in work-assign-split-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(min(100%, 320px), 420px) minmax(0, 1fr)', gap: '24px' }}>
           {/* Left Form: Submit Daily Work Update */}
-          <div style={{ backgroundColor: '#ffffff', borderRadius: '18px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
+          <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '18px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
             <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0b3d2b', marginBottom: '4px' }}>
               Submit Daily Work Standup
             </h3>
@@ -1231,7 +1302,7 @@ export default function EmployeeWorkAssignments() {
           </div>
 
           {/* Right Column: Historical Daily Submissions */}
-          <div style={{ backgroundColor: '#ffffff', borderRadius: '18px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
+          <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '18px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
             <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0b3d2b', marginBottom: '16px' }}>
               My Daily Work Logs & Standup History
             </h3>
@@ -1317,7 +1388,7 @@ export default function EmployeeWorkAssignments() {
       {/* ========================================================================= */}
       {activeTab === 'feedback' && (
         <div className="animate-fade-in">
-          <div style={{ backgroundColor: '#ffffff', borderRadius: '18px', padding: '24px', border: '1px solid #e2e8f0', marginBottom: '24px' }}>
+          <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '18px', padding: '24px', border: '1px solid #e2e8f0', marginBottom: '24px' }}>
             <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0b3d2b', marginBottom: '6px' }}>
               Team Leader Feedback & Quality Assurance Reviews
             </h3>
@@ -1326,7 +1397,7 @@ export default function EmployeeWorkAssignments() {
             </p>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '20px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 360px), 1fr))', gap: '20px' }}>
             {tasks
               .filter((t) => t.feedback || t.rework_notes || t.status === 'REWORK' || t.status === 'APPROVED')
               .map((t) => {
@@ -1509,43 +1580,10 @@ export default function EmployeeWorkAssignments() {
                       <div style={{ marginTop: '12px' }}>
                         <button
                           type="button"
-                          onClick={() => {
-                            const pdfData = teamData.project.proposal_pdf;
-                            const pdfName = teamData.project.proposal_pdf_name || `${teamData.project.name} - Proposal.pdf`;
-                            if (pdfData.startsWith('data:application/pdf') || pdfData.startsWith('data:')) {
-                              const pdfWindow = window.open('', '_blank');
-                              if (pdfWindow) {
-                                pdfWindow.document.write(`
-                                  <!DOCTYPE html>
-                                  <html>
-                                    <head>
-                                      <title>${pdfName}</title>
-                                      <style>
-                                        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #525659; font-family: system-ui, -apple-system, sans-serif; }
-                                        .topbar { display: flex; align-items: center; justify-content: space-between; background: #0b3d2b; color: #ffffff; padding: 10px 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
-                                        .topbar .title { font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
-                                        .topbar a.download-btn { background: #0f766e; color: #ffffff; padding: 6px 14px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 700; transition: background 0.15s; }
-                                        .topbar a.download-btn:hover { background: #14b8a6; }
-                                        iframe { border: none; width: 100%; height: calc(100% - 48px); }
-                                      </style>
-                                    </head>
-                                    <body>
-                                      <div class="topbar">
-                                        <div class="title">📄 ${pdfName}</div>
-                                        <a class="download-btn" href="${pdfData}" download="${pdfName}">⬇ Download Proposal PDF</a>
-                                      </div>
-                                      <iframe src="${pdfData}" type="application/pdf"></iframe>
-                                    </body>
-                                  </html>
-                                `);
-                                pdfWindow.document.close();
-                              } else {
-                                window.open(pdfData, '_blank');
-                              }
-                            } else {
-                              window.open(pdfData, '_blank');
-                            }
-                          }}
+                          onClick={() => openPdfViewer(
+                            teamData.project.proposal_pdf,
+                            teamData.project.proposal_pdf_name || `${teamData.project.name} - Proposal.pdf`
+                          )}
                           style={{
                             display: 'inline-flex',
                             alignItems: 'center',
@@ -1701,7 +1739,7 @@ export default function EmployeeWorkAssignments() {
       {/* ========================================================================= */}
       {activeTab === 'notifications' && (
         <div className="animate-fade-in">
-          <div style={{ backgroundColor: '#ffffff', borderRadius: '18px', padding: '24px', border: '1px solid #e2e8f0', marginBottom: '24px' }}>
+          <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '18px', padding: '24px', border: '1px solid #e2e8f0', marginBottom: '24px' }}>
             <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0b3d2b', marginBottom: '6px' }}>
               In-App Task Notifications & Alerts
             </h3>
@@ -1711,7 +1749,7 @@ export default function EmployeeWorkAssignments() {
           </div>
 
           {notifications.length === 0 ? (
-            <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '40px', textAlign: 'center', color: '#64748b' }}>
+            <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '40px', textAlign: 'center', color: '#64748b' }}>
               <Bell size={40} color="#94a3b8" style={{ margin: '0 auto 10px auto' }} />
               <p>No new notifications. You are completely up to date!</p>
             </div>
@@ -1843,7 +1881,7 @@ export default function EmployeeWorkAssignments() {
 
           {/* Metric Cards Grid */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '18px', marginBottom: '28px' }}>
-            <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '20px', border: '1px solid #e2e8f0', boxShadow: '0 2px 6px rgba(0,0,0,0.02)' }}>
+            <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '20px', border: '1px solid #e2e8f0', boxShadow: '0 2px 6px rgba(0,0,0,0.02)' }}>
               <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Completion Rate</div>
               <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#0b3d2b', marginTop: '6px' }}>
                 {performance?.completion_rate || 90}%
@@ -1853,7 +1891,7 @@ export default function EmployeeWorkAssignments() {
               </div>
             </div>
 
-            <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '20px', border: '1px solid #e2e8f0', boxShadow: '0 2px 6px rgba(0,0,0,0.02)' }}>
+            <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '20px', border: '1px solid #e2e8f0', boxShadow: '0 2px 6px rgba(0,0,0,0.02)' }}>
               <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>On-Time Delivery</div>
               <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#0f766e', marginTop: '6px' }}>
                 {performance?.on_time_rate || 95}%
@@ -1861,7 +1899,7 @@ export default function EmployeeWorkAssignments() {
               <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px' }}>Delivered on or before deadline</div>
             </div>
 
-            <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '20px', border: '1px solid #e2e8f0', boxShadow: '0 2px 6px rgba(0,0,0,0.02)' }}>
+            <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '20px', border: '1px solid #e2e8f0', boxShadow: '0 2px 6px rgba(0,0,0,0.02)' }}>
               <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Rework Rate</div>
               <div style={{ fontSize: '1.8rem', fontWeight: 800, color: performance?.rework_rate > 10 ? '#ea580c' : '#10b981', marginTop: '6px' }}>
                 {performance?.rework_rate || 0}%
@@ -1871,7 +1909,7 @@ export default function EmployeeWorkAssignments() {
               </div>
             </div>
 
-            <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '20px', border: '1px solid #e2e8f0', boxShadow: '0 2px 6px rgba(0,0,0,0.02)' }}>
+            <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '20px', border: '1px solid #e2e8f0', boxShadow: '0 2px 6px rgba(0,0,0,0.02)' }}>
               <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Total Hours Logged</div>
               <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#2563eb', marginTop: '6px' }}>
                 {performance?.total_hours_logged || 38.5}h

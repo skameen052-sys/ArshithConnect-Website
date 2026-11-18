@@ -771,16 +771,6 @@ export default function EmployeeDashboard() {
         </div>
       </section>
 
-      {/* Log Out Button (matches screenshot) */}
-      <button
-        type="button"
-        className="btn-logout-bottom"
-        onClick={handleLogout}
-      >
-        <LogOut size={16} />
-        <span>Log Out</span>
-      </button>
-
       {/* Quick Action Modals */}
       {/* 1. Announcements Modal */}
       <Modal

@@ -731,18 +731,6 @@ export default function AdminDashboard() {
         </div>
       </section>
 
-      {/* Prominent Red Logout Button matching Screenshot 4 */}
-      <section style={{ marginTop: '16px' }}>
-        <button
-          type="button"
-          className="btn-admin-logout"
-          onClick={handleLogout}
-        >
-          <LogOut size={18} />
-          <span>LOGOUT</span>
-        </button>
-      </section>
-
       {/* Add Announcement Modal */}
       <Modal
         isOpen={isAddModalOpen}

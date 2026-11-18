@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { User, Mail, Phone, Lock, Eye, EyeOff, Briefcase, Award, CheckCircle2, Loader2, ArrowLeft, Building2 } from 'lucide-react';
+import { User, Mail, Phone, Lock, Eye, EyeOff, Briefcase, Award, CheckCircle2, Clock, Loader2, ArrowLeft, Building2 } from 'lucide-react';
 import BrandLogo from '../../components/common/BrandLogo';
 import { teamLeaderService } from '../../services/teamLeaderService';
 import '../../styles/auth.css';
@@ -128,25 +128,24 @@ export default function TeamLeaderRegister() {
                   width: '60px',
                   height: '60px',
                   borderRadius: '50%',
-                  backgroundColor: '#ecfdf5',
-                  color: '#059669',
+                  backgroundColor: '#fef3c7',
+                  color: '#d97706',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   margin: '0 auto 16px auto',
-                  border: '2px solid #a7f3d0',
+                  border: '2px solid #fde68a',
                 }}
               >
-                <CheckCircle2 size={36} />
+                <Clock size={34} />
               </div>
 
-              <h2 style={{ fontSize: '1.2rem', fontWeight: '800', color: '#065f46', marginBottom: '8px' }}>
+              <h2 style={{ fontSize: '1.2rem', fontWeight: '800', color: '#92400e', marginBottom: '8px' }}>
                 Registration Submitted!
               </h2>
 
               <p style={{ fontSize: '0.88rem', color: '#334155', lineHeight: '1.5', marginBottom: '16px' }}>
-                Your leadership profile for <strong>{formData.fullName}</strong> has been sent to{' '}
-                <strong>Project HR</strong> for verification.
+                Your leadership profile for <strong>{formData.fullName}</strong> has been submitted and is currently <strong>awaiting Project HR & Admin approval</strong>.
               </p>
 
               <div
@@ -173,6 +172,22 @@ export default function TeamLeaderRegister() {
                   <span style={{ fontWeight: '600' }}>Status:</span>
                   <span style={{ color: '#d97706', fontWeight: '800' }}>PENDING HR APPROVAL</span>
                 </div>
+              </div>
+
+              <div
+                style={{
+                  backgroundColor: '#fffbeb',
+                  border: '1px solid #fde68a',
+                  borderRadius: '8px',
+                  padding: '10px 12px',
+                  fontSize: '0.8rem',
+                  color: '#92400e',
+                  lineHeight: '1.4',
+                  marginBottom: '20px',
+                  textAlign: 'left',
+                }}
+              >
+                Your account is currently locked pending review. Once Project HR or an Admin reviews and approves your application, you will be able to log in to the Team Leader dashboard.
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>

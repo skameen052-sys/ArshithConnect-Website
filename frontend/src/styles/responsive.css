@@ -1,9 +1,89 @@
 /* Responsive Breakpoints & Utilities */
 
+/* Shared Shell Fit & Overflow Prevention */
+.admin-page-content,
+.admin-content,
+.employee-dashboard-content {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.admin-page-content .hrms-page-container {
+  padding: 0;
+  max-width: 100%;
+}
+
+.dashboard-container:has(.admin-chat-page) {
+  padding-bottom: 12px;
+}
+
+.portal-navbar {
+  gap: 10px;
+  min-width: 0;
+}
+
+.portal-nav-left,
+.portal-nav-right {
+  min-width: 0;
+}
+
+/* Compact Screens (<= 640px) */
+@media (max-width: 640px) {
+  .navbar-logout-text,
+  .user-info-text,
+  .navbar-btn-label,
+  .tl-navbar-role-pill {
+    display: none !important;
+  }
+
+  .portal-navbar {
+    gap: 6px;
+  }
+
+  .portal-nav-left {
+    gap: 8px;
+  }
+
+  .portal-nav-right {
+    gap: 6px !important;
+  }
+
+  .user-profile-badge {
+    padding: 3px;
+    gap: 0;
+  }
+
+  .admin-header-container {
+    padding: 8px 12px;
+  }
+
+  .dashboard-container,
+  .admin-content,
+  .employee-content-container {
+    padding: 12px 12px 32px 12px;
+  }
+
+  .employee-content-container:has(.employee-chat-page),
+  .dashboard-container:has(.admin-chat-page) {
+    padding: 8px 8px 10px 8px;
+  }
+
+  .emp-daily-work-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 900px) {
+  .work-assign-split-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
 /* Mobile Handsets (<= 480px) */
 @media (max-width: 480px) {
   .portal-navbar {
-    padding: 10px 14px;
+    padding: 8px 0;
   }
 
   .auth-container {
@@ -44,9 +124,9 @@
   }
 }
 
-/* Desktop Desktops (>= 1024px) */
+/* Desktops (>= 1024px) */
 @media (min-width: 1024px) {
   .dashboard-container {
-    max-width: 1100px;
+    max-width: 1280px;
   }
 }

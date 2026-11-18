@@ -1,5 +1,7 @@
 import logging
 import base64
+import re
+import threading
 from datetime import date, datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
@@ -158,17 +160,31 @@ def _calculate_urgency(deadline_str: str, status_str: str) -> dict:
         }
 
 
-def _format_employee_task(t: dict) -> dict:
+def _format_employee_task(t: dict, project_doc: Optional[dict] = None) -> dict:
     st = str(t.get("status", "TODO")).strip().upper()
     urgency = _calculate_urgency(t.get("deadline", ""), st)
+    proposal_pdf = (project_doc or {}).get("proposal_pdf") or t.get("proposal_pdf")
+    proposal_pdf_name = (project_doc or {}).get("proposal_pdf_name") or t.get("proposal_pdf_name")
+    if project_doc is None and not proposal_pdf and t.get("project_id"):
+        try:
+            proj = firestore_service.get_document("projects", str(t.get("project_id")))
+            if proj:
+                proposal_pdf = proj.get("proposal_pdf")
+                proposal_pdf_name = proj.get("proposal_pdf_name")
+        except Exception:
+            pass
     return {
         "id": t.get("id"),
         "project_id": t.get("project_id"),
         "project_name": t.get("project_name") or "Sprint Project",
         "title": t.get("title", "Untitled Task"),
         "description": t.get("description", ""),
-        "team_leader_name": t.get("team_leader_name") or "Team Leader",
-        "team_leader_id": t.get("team_leader_id"),
+        "proposal_pdf": proposal_pdf,
+        "proposal_pdf_name": proposal_pdf_name,
+        "team_leader_name": t.get("team_leader_name") or t.get("lead") or t.get("team_leader") or "Team Leader",
+        "team_leader_id": t.get("team_leader_id") or t.get("lead_id"),
+        "lead": t.get("lead") or t.get("team_leader_name") or t.get("team_leader") or "Team Leader",
+        "team_leader_email": t.get("team_leader_email"),
         "assigned_to": t.get("assigned_to", "Me"),
         "assigned_to_id": t.get("assigned_to_id"),
         "deadline": t.get("deadline", ""),
@@ -327,6 +343,8 @@ def get_my_team_details(current_user=Depends(get_current_user)):
             "priority": my_project.get("priority", "High"),
             "deadline": my_project.get("deadline", ""),
             "progress": int(my_project.get("progress", 0)),
+            "proposal_pdf": my_project.get("proposal_pdf"),
+            "proposal_pdf_name": my_project.get("proposal_pdf_name"),
         },
         "team_name": my_project.get("team_name") or "Project Sprint Team",
         "team_leader": tl_info,
@@ -343,6 +361,46 @@ def get_my_team_details(current_user=Depends(get_current_user)):
 # 10. View Assigned Tasks & 16. View Deadlines
 # ============================================================================
 
+_task_provision_lock = threading.Lock()
+
+
+def _deterministic_auto_task_id(project_id: str, emp_id: str, emp_name: str) -> str:
+    p_key = re.sub(r"[^A-Z0-9]", "", str(project_id or "").upper())[:12] or "PRJ"
+    e_raw = emp_id or emp_name or "EMP"
+    e_key = re.sub(r"[^A-Z0-9]", "", str(e_raw).upper())[:12] or "EMP"
+    return f"TSK-{p_key}-{e_key}"
+
+
+def _sync_assignment_mirror(task_id: str, task: dict) -> None:
+    """Keep any mirrored workAssignments document aligned without failing the primary update."""
+    try:
+        existing = firestore_service.get_document("assignments", task_id)
+        if existing:
+            firestore_service.update_document("assignments", task_id, {
+                "status": task.get("status", "IN_PROGRESS"),
+                "progress": int(task.get("progress", 0) or 0),
+                "updated_at": task.get("updated_at"),
+            })
+    except Exception:
+        pass
+
+
+def _task_matches_employee(d: dict, emp_id: str, emp_name: str, emp_email: str) -> bool:
+    assigned_name = str(d.get("assigned_to", "")).strip().lower()
+    assigned_id = str(d.get("assigned_to_id", "")).strip()
+    if assigned_id and assigned_id == emp_id:
+        return True
+    if emp_name and (
+        emp_name.lower() == assigned_name
+        or (len(emp_name) >= 3 and emp_name.lower() in assigned_name)
+        or (len(assigned_name) >= 3 and assigned_name in emp_name.lower())
+    ):
+        return True
+    if emp_email and emp_email.split("@")[0].lower() in assigned_name:
+        return True
+    return False
+
+
 @router.get("/tasks", response_model=List[dict])
 def get_my_assigned_tasks(
     status_filter: Optional[str] = None,
@@ -356,23 +414,88 @@ def get_my_assigned_tasks(
     """
     emp_id, emp_name, emp_email = _resolve_employee(current_user)
     docs = firestore_service.list_documents("project_tasks") or []
+    all_projects = firestore_service.list_documents("projects") or []
+
+    # Track projects where this employee already has an active task
+    existing_project_ids = {
+        str(d.get("project_id"))
+        for d in docs
+        if d.get("project_id") and _task_matches_employee(d, emp_id, emp_name, emp_email)
+    }
+
+    # Determine if any assigned project is missing an initial task
+    missing_projects = []
+    for p in all_projects:
+        p_id = str(p.get("id") or "")
+        if not p_id or p_id in existing_project_ids:
+            continue
+        assigned_list = [str(x).strip().lower() for x in p.get("assigned_employees", [])]
+        is_assigned = (
+            emp_name.lower() in assigned_list
+            or any(emp_name.lower() in a for a in assigned_list)
+            or emp_email.lower() in assigned_list
+        )
+        if is_assigned:
+            missing_projects.append(p)
+
+    # Auto-ensure task exists under lock so concurrent /tasks, /deadlines, /notifications,
+    # and /my-performance calls cannot race and create duplicate "<Project> Execution" tasks.
+    if missing_projects:
+        with _task_provision_lock:
+            docs = firestore_service.list_documents("project_tasks") or []
+            existing_project_ids = {
+                str(d.get("project_id"))
+                for d in docs
+                if d.get("project_id") and _task_matches_employee(d, emp_id, emp_name, emp_email)
+            }
+            now_iso = datetime.now(timezone.utc).isoformat()
+            for p in missing_projects:
+                p_id = str(p.get("id") or "")
+                if p_id in existing_project_ids:
+                    continue
+                task_id = _deterministic_auto_task_id(p_id, emp_id, emp_name)
+                p_name = p.get("name") or "Sprint Project"
+                p_desc = p.get("description") or f"Execute deliverables and sprint milestones for {p_name}."
+                tl_name = p.get("team_leader") or "Team Leader"
+                tl_id = p.get("team_leader_id") or "TL-001"
+                new_task = {
+                    "id": task_id,
+                    "project_id": p_id,
+                    "project_name": p_name,
+                    "title": f"{p_name} Execution",
+                    "description": p_desc,
+                    "team_leader_name": tl_name,
+                    "team_leader_id": tl_id,
+                    "assigned_to": emp_name,
+                    "assigned_to_id": emp_id,
+                    "assigned_to_email": emp_email,
+                    "deadline": p.get("deadline") or date.today().isoformat(),
+                    "priority": p.get("priority") or "High",
+                    "estimated_hours": 8.0,
+                    "status": "TODO",
+                    "progress": 0,
+                    "review_status": "PENDING",
+                    "rework_notes": "",
+                    "feedback": "",
+                    "created_at": now_iso,
+                    "updated_at": now_iso,
+                }
+                firestore_service.create_document("project_tasks", new_task)
+                docs.append(new_task)
+                existing_project_ids.add(p_id)
+
+    project_by_id = {str(p.get("id")).strip(): p for p in all_projects if p.get("id")}
+    project_by_name = {
+        str(p.get("name")).strip().lower(): p for p in all_projects if p.get("name")
+    }
 
     tasks = []
     for d in docs:
-        assigned_name = str(d.get("assigned_to", "")).strip().lower()
-        assigned_id = str(d.get("assigned_to_id", "")).strip()
-
-        # Strict match employee
-        matches = False
-        if assigned_id and assigned_id == emp_id:
-            matches = True
-        elif emp_name and (emp_name.lower() == assigned_name or (len(emp_name) >= 3 and emp_name.lower() in assigned_name) or (len(assigned_name) >= 3 and assigned_name in emp_name.lower())):
-            matches = True
-        elif emp_email and emp_email.split("@")[0].lower() in assigned_name:
-            matches = True
-
-        if matches:
-            item = _format_employee_task(d)
+        if _task_matches_employee(d, emp_id, emp_name, emp_email):
+            pid = str(d.get("project_id") or "").strip()
+            pname = str(d.get("project_name") or "").strip().lower()
+            matched_proj = project_by_id.get(pid) or project_by_name.get(pname) or {}
+            item = _format_employee_task(d, matched_proj)
             if status_filter and item["status"].lower() != status_filter.lower():
                 continue
             if priority_filter and item["priority"].lower() != priority_filter.lower():
@@ -442,6 +565,8 @@ def update_task_status(
         task["status_notes"] = data.notes.strip()
 
     firestore_service.update_document("project_tasks", task_id, task)
+    _sync_assignment_mirror(task_id, task)
+    firestore_service.sync_project_progress(task.get("project_id"), task.get("project_name"))
 
     # Log in audit
     logger.info(f"Task {task_id} status updated to {data.status} ({data.progress}%) by {emp_name}")
@@ -482,6 +607,8 @@ def submit_task_deliverables(
     task["updated_at"] = now_iso
 
     firestore_service.update_document("project_tasks", task_id, task)
+    _sync_assignment_mirror(task_id, task)
+    firestore_service.sync_project_progress(task.get("project_id"), task.get("project_name"))
 
     # Create in-app notification for Team Leader
     tl_id = task.get("team_leader_id")
@@ -664,6 +791,8 @@ def resubmit_task_after_rework(
     task["history"] = history
 
     firestore_service.update_document("project_tasks", task_id, task)
+    _sync_assignment_mirror(task_id, task)
+    firestore_service.sync_project_progress(task.get("project_id"), task.get("project_name"))
 
     # In-app notification for Team Leader
     tl_id = task.get("team_leader_id")

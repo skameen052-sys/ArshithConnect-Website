@@ -42,11 +42,18 @@ export default function EmployeeProfile() {
       setIsSaving(true);
       const compressed = await compressImageFile(file, 400, 400, 0.85);
       await employeeService.updateMyProfile({ profile_photo: compressed });
-      setProfile((prev) => ({ ...(prev || {}), profile_photo: compressed, profilePhoto: compressed }));
+      setProfile((prev) => ({
+        ...(prev || {}),
+        profile_photo: compressed,
+        profilePhoto: compressed,
+        photoUrl: compressed,
+      }));
       const stored = JSON.parse(localStorage.getItem('arshith_user') || '{}');
       stored.profile_photo = compressed;
       stored.profilePhoto = compressed;
+      stored.photoUrl = compressed;
       localStorage.setItem('arshith_user', JSON.stringify(stored));
+      window.dispatchEvent(new Event('arshith_user_updated'));
       setFeedbackMsg({ type: 'success', text: 'Profile photo updated successfully from your laptop!' });
     } catch (err) {
       setFeedbackMsg({ type: 'error', text: err.message || 'Failed to upload profile photo' });
@@ -119,7 +126,24 @@ export default function EmployeeProfile() {
   const accountNumber = profile?.accountNumber || profile?.account_number || profile?.bank_account_no || '';
   const panNumber = profile?.panNumber || profile?.pan_number || profile?.pan || '';
   const uanNumber = profile?.uanNumber || profile?.uan_number || profile?.uan || profile?.pf_number || '';
-  const profilePhoto = profile?.profile_photo || profile?.profilePhoto || storedUser?.profile_photo || storedUser?.profilePhoto || '';
+  const [profileImgError, setProfileImgError] = useState(false);
+  const profilePhoto = (
+    profile?.photoUrl ||
+    profile?.profile_photo ||
+    profile?.profilePhoto ||
+    profile?.photo_url ||
+    profile?.avatar ||
+    storedUser?.photoUrl ||
+    storedUser?.profile_photo ||
+    storedUser?.profilePhoto ||
+    storedUser?.photo_url ||
+    storedUser?.avatar ||
+    ''
+  );
+
+  useEffect(() => {
+    setProfileImgError(false);
+  }, [profilePhoto]);
 
   const handleEditToggle = () => {
     if (!isEditing) {
@@ -293,10 +317,11 @@ export default function EmployeeProfile() {
             }}
             title="Click to change profile photo from laptop"
           >
-            {profilePhoto ? (
+            {profilePhoto && !profileImgError ? (
               <img
                 src={profilePhoto}
                 alt={employeeName}
+                onError={() => setProfileImgError(true)}
                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
               />
             ) : (

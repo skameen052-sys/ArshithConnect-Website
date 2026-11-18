@@ -92,6 +92,8 @@ def format_project(doc: dict) -> dict:
         "team_name": doc.get("team_name") or "Core Team",
         "team_leader": doc.get("team_leader") or "Unassigned",
         "team_leader_id": doc.get("team_leader_id"),
+        "team_leader_email": doc.get("team_leader_email") or doc.get("team_lead_email"),
+        "team_lead_email": doc.get("team_lead_email") or doc.get("team_leader_email"),
         "team_leader_approval_status": doc.get("team_leader_approval_status", "PENDING"),
         "team_leader_remarks": doc.get("team_leader_remarks", ""),
         "assigned_employees": doc.get("assigned_employees", []),
@@ -109,23 +111,70 @@ def format_project(doc: dict) -> dict:
 
 
 def get_approved_team_leaders() -> List[dict]:
-    """Retrieve only registered and Admin/HR-approved Team Leaders."""
+    """Retrieve all registered Team Leaders for selection in project forms."""
     tls = firestore_service.list_documents("team_leaders") or []
-    approved = []
+    users = firestore_service.list_documents("users") or []
+
+    leaders = []
+    seen = set()
+
     for tl in tls:
         st = str(tl.get("approval_status", "")).strip().upper()
-        if st == "APPROVED" and tl.get("is_active", True):
-            name = tl.get("full_name") or tl.get("name") or "Team Leader"
-            approved.append({
-                "id": tl.get("team_leader_id") or tl.get("id"),
+        if st not in ("APPROVED", "ACTIVE") or tl.get("is_active") is False:
+            continue
+        email = str(tl.get("email", "")).strip().lower()
+        tl_id = str(tl.get("team_leader_id") or tl.get("id") or "").strip()
+        name = tl.get("full_name") or tl.get("name") or "Team Leader"
+        key = email or tl_id or name.lower()
+        if key not in seen:
+            seen.add(key)
+            if email:
+                seen.add(email)
+            if tl_id:
+                seen.add(tl_id)
+            leaders.append({
+                "id": tl_id or email,
+                "team_leader_id": tl_id,
                 "name": name,
-                "email": tl.get("email"),
+                "full_name": name,
+                "email": email,
                 "phone": tl.get("phone", "--"),
                 "department": tl.get("department", "Engineering"),
                 "specialization": tl.get("specialization", "Technical Leadership"),
+                "approval_status": "APPROVED",
+                "is_active": True,
             })
-    approved.sort(key=lambda x: x["name"].lower())
-    return approved
+
+    for u in users:
+        if str(u.get("role", "")).lower() == "team_leader":
+            st = str(u.get("approval_status", "")).strip().upper()
+            if st not in ("APPROVED", "ACTIVE") or u.get("is_active") is False:
+                continue
+            email = str(u.get("email", "")).strip().lower()
+            u_id = str(u.get("team_leader_id") or u.get("id") or u.get("uid") or "").strip()
+            name = u.get("name") or u.get("full_name") or "Team Leader"
+            key = email or u_id or name.lower()
+            if key not in seen:
+                seen.add(key)
+                if email:
+                    seen.add(email)
+                if u_id:
+                    seen.add(u_id)
+                leaders.append({
+                    "id": u_id or email,
+                    "team_leader_id": u_id,
+                    "name": name,
+                    "full_name": name,
+                    "email": email,
+                    "phone": u.get("phone", "--"),
+                    "department": u.get("department", "Engineering"),
+                    "specialization": u.get("specialization", "Technical Leadership"),
+                    "approval_status": "APPROVED",
+                    "is_active": True,
+                })
+
+    leaders.sort(key=lambda x: x["name"].lower())
+    return leaders
 
 
 def get_approved_employees_list() -> List[dict]:
@@ -206,17 +255,24 @@ def create_project(
 
     tl_name = data.team_leader.strip() if data.team_leader else "Unassigned"
     tl_id = data.team_leader_id
+    tl_email = ""
 
     # Validate Team Leader selection
     if tl_name and tl_name != "Unassigned":
-        if tl_name.lower() not in approved_leader_map:
+        matched_leader = approved_leader_map.get(tl_name.lower())
+        if not matched_leader:
+            for l in approved_leaders:
+                if (l.get("email") and l["email"].lower() == tl_name.lower()) or (l.get("id") and str(l["id"]).lower() == tl_name.lower()):
+                    matched_leader = l
+                    break
+        if not matched_leader:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Team Leader '{tl_name}' is not registered or not Admin/HR-approved."
+                detail=f"Team Leader '{tl_name}' is not registered."
             )
-        matched_leader = approved_leader_map[tl_name.lower()]
         tl_name = matched_leader["name"]
         tl_id = matched_leader["id"]
+        tl_email = matched_leader.get("email", "")
 
     # Validate and deduplicate assigned employees
     validated_assigned = []
@@ -239,20 +295,25 @@ def create_project(
 
     project_data = {
         "id": doc_id,
+        "project_id": doc_id,
         "name": data.name.strip(),
+        "title": data.name.strip(),
         "description": data.description.strip() if data.description else "",
         "department": data.department.strip() if data.department else "Operations",
         "team_id": data.team_id,
         "team_name": data.team_name or "Core Team",
         "team_leader": tl_name,
         "team_leader_id": tl_id,
+        "team_leader_email": tl_email,
+        "team_lead_email": tl_email,
         "team_leader_approval_status": "APPROVED" if tl_name != "Unassigned" else "PENDING",
         "team_leader_remarks": "",
         "assigned_employees": validated_assigned,
+        "staff_count": len(validated_assigned),
         "start_date": data.start_date or date.today().isoformat(),
         "deadline": data.deadline,
         "priority": data.priority or "High",
-        "status": data.status or "Planning",
+        "status": data.status or "In Progress",
         "progress": data.progress or 0,
         "proposal_pdf": data.proposal_pdf,
         "proposal_pdf_name": data.proposal_pdf_name,
@@ -487,9 +548,13 @@ def assign_employees(
 
     firestore_service.update_document("projects", project_id, proj)
 
-    # In-app notifications to newly assigned employees
+    # In-app notifications and task auto-enrollment to newly assigned employees
     tl_name = proj.get("team_leader") or "Team Leader"
+    tl_id = proj.get("team_leader_id") or "TL-001"
+    all_existing_tasks = firestore_service.list_documents("project_tasks") or []
+
     for emp_name in validated_employees:
+        # 1. In-app notification
         notif_id = f"NOTIF-{int(datetime.now().timestamp() * 1000) % 1000000:06d}"
         firestore_service.create_document("employee_notifications", {
             "id": notif_id,
@@ -502,6 +567,43 @@ def assign_employees(
             "is_read": False,
             "created_at": now_iso,
         })
+
+        # 2. Ensure initial project task in project_tasks
+        has_task = any(
+            str(t.get("project_id")) == project_id and str(t.get("assigned_to", "")).strip().lower() == emp_name.lower()
+            for t in all_existing_tasks
+        )
+        if not has_task:
+            emp_info = approved_map.get(emp_name.lower(), {})
+            target_emp_id = emp_info.get("employee_id") or emp_info.get("id") or emp_name.lower()
+            target_email = emp_info.get("email") or ""
+            p_key = "".join(c for c in str(project_id).upper() if c.isalnum())[:12] or "PRJ"
+            e_key = "".join(c for c in str(target_emp_id).upper() if c.isalnum())[:12] or "EMP"
+            t_id = f"TSK-{p_key}-{e_key}"
+            new_task = {
+                "id": t_id,
+                "project_id": project_id,
+                "project_name": proj.get("name") or "Sprint Project",
+                "title": f"{proj.get('name')} Execution",
+                "description": proj.get("description") or f"Execute deliverables and sprint milestones for {proj.get('name')}.",
+                "team_leader_name": tl_name,
+                "team_leader_id": tl_id,
+                "assigned_to": emp_name,
+                "assigned_to_id": target_emp_id,
+                "assigned_to_email": target_email,
+                "deadline": proj.get("deadline") or date.today().isoformat(),
+                "priority": proj.get("priority") or "High",
+                "estimated_hours": 8.0,
+                "status": "TODO",
+                "progress": 0,
+                "review_status": "PENDING",
+                "rework_notes": "",
+                "feedback": "",
+                "created_at": now_iso,
+                "updated_at": now_iso,
+            }
+            firestore_service.create_document("project_tasks", new_task)
+            all_existing_tasks.append(new_task)
 
     return format_project(proj)
 

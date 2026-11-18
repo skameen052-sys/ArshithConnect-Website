@@ -3,15 +3,16 @@ import { useNavigate } from 'react-router-dom';
 import { 
   ArrowLeft, Trash2, Search, Filter, Calendar, RefreshCw, 
   Clock, Plus, CheckCircle2, AlertCircle, Edit2, X, AlertTriangle,
-  Sliders, Layers, Check
+  Sliders, Layers, Check, FileText
 } from 'lucide-react';
 import { workUpdateService } from '../../services/workUpdateService';
+import WorkUpdatesDrilldown from '../../components/work-updates/WorkUpdatesDrilldown';
 
 export default function AdminWorkUpdates() {
   const navigate = useNavigate();
 
-  // Active Tab: 'updates' | 'schedules'
-  const [activeTab, setActiveTab] = useState('updates');
+  // Active Tab: 'reports' | 'table' | 'schedules'
+  const [activeTab, setActiveTab] = useState('reports');
 
   // Work Updates list state
   const [updates, setUpdates] = useState([]);
@@ -220,7 +221,7 @@ export default function AdminWorkUpdates() {
   };
 
   return (
-    <div style={{ maxWidth: '860px', margin: '0 auto', padding: '16px 20px 48px', backgroundColor: '#f8fafc', minHeight: '100vh' }}>
+    <div style={{ maxWidth: '1160px', margin: '0 auto', padding: '16px 20px 48px', backgroundColor: '#f8fafc', minHeight: '100vh' }}>
       {/* HEADER matching Mobile Screenshot 1 & 2 */}
       <div 
         style={{ 
@@ -260,8 +261,25 @@ export default function AdminWorkUpdates() {
           </span>
         </div>
 
-        {/* Tab switchers: Updates vs Schedule Management */}
-        <div style={{ display: 'flex', backgroundColor: '#f1f5f9', borderRadius: '10px', padding: '3px' }}>
+        {/* Tab switchers: Employee Reports vs Table vs Schedule Management */}
+        <div style={{ display: 'flex', backgroundColor: '#f1f5f9', borderRadius: '10px', padding: '3px', gap: '2px' }}>
+          <button
+            type="button"
+            onClick={() => setActiveTab('reports')}
+            style={{
+              padding: '6px 14px',
+              borderRadius: '8px',
+              border: 'none',
+              fontSize: '0.82rem',
+              fontWeight: '700',
+              backgroundColor: activeTab === 'reports' ? '#ffffff' : 'transparent',
+              color: activeTab === 'reports' ? '#0f172a' : '#64748b',
+              boxShadow: activeTab === 'reports' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+              cursor: 'pointer',
+            }}
+          >
+            Employee Reports
+          </button>
           <button
             type="button"
             onClick={() => setActiveTab('updates')}
@@ -277,7 +295,7 @@ export default function AdminWorkUpdates() {
               cursor: 'pointer',
             }}
           >
-            Submitted Updates ({updates.length})
+            Raw Logs ({updates.length})
           </button>
           <button
             type="button"
@@ -299,60 +317,73 @@ export default function AdminWorkUpdates() {
         </div>
       </div>
 
-      {/* Main Title matching Screenshots 1 & 2 */}
-      <div style={{ marginBottom: '20px' }}>
-        <h1 style={{ fontSize: '1.75rem', fontWeight: '800', color: '#172A24', margin: 0, letterSpacing: '-0.02em' }}>
-          {activeTab === 'updates' ? 'Employee Work Updates' : 'Work Schedule Management'}
-        </h1>
-        <p style={{ fontSize: '0.92rem', color: '#66756F', margin: '4px 0 0', lineHeight: 1.4 }}>
-          {activeTab === 'updates' 
-            ? 'View work updates submitted by employees.' 
-            : 'Configure daily update schedules, times, and submission availability windows.'}
-        </p>
-      </div>
-
-      {/* Success Notification */}
-      {successMessage && (
-        <div
-          style={{
-            backgroundColor: '#ecfdf5',
-            border: '1px solid #a7f3d0',
-            color: '#065f46',
-            borderRadius: '10px',
-            padding: '12px 16px',
-            fontSize: '0.9rem',
-            fontWeight: '600',
-            marginBottom: '18px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-          }}
-        >
-          <CheckCircle2 size={18} />
-          <span>{successMessage}</span>
+      {/* ============================================================== */}
+      {/* TAB 0: 3-TIER EMPLOYEE DRILLDOWN REPORTS (Screenshots 1, 2, 3) */}
+      {/* ============================================================== */}
+      {activeTab === 'reports' && (
+        <div style={{ margin: '-16px -20px 0' }}>
+          <WorkUpdatesDrilldown onExit={() => navigate('/admin/dashboard')} />
         </div>
       )}
 
-      {/* Error Notification */}
-      {errorMessage && (
-        <div
-          style={{
-            backgroundColor: '#fef2f2',
-            border: '1px solid #fecaca',
-            color: '#b91c1c',
-            borderRadius: '10px',
-            padding: '12px 16px',
-            fontSize: '0.9rem',
-            fontWeight: '600',
-            marginBottom: '18px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-          }}
-        >
-          <AlertCircle size={18} />
-          <span>{errorMessage}</span>
-        </div>
+      {activeTab !== 'reports' && (
+        <>
+          {/* Main Title matching Screenshots 1 & 2 */}
+          <div style={{ marginBottom: '20px' }}>
+            <h1 style={{ fontSize: '1.75rem', fontWeight: '800', color: '#172A24', margin: 0, letterSpacing: '-0.02em' }}>
+              {activeTab === 'updates' ? 'Employee Work Updates' : 'Work Schedule Management'}
+            </h1>
+            <p style={{ fontSize: '0.92rem', color: '#66756F', margin: '4px 0 0', lineHeight: 1.4 }}>
+              {activeTab === 'updates' 
+                ? 'View work updates submitted by employees.' 
+                : 'Configure daily update schedules, times, and submission availability windows.'}
+            </p>
+          </div>
+
+          {/* Success Notification */}
+          {successMessage && (
+            <div
+              style={{
+                backgroundColor: '#ecfdf5',
+                border: '1px solid #a7f3d0',
+                color: '#065f46',
+                borderRadius: '10px',
+                padding: '12px 16px',
+                fontSize: '0.9rem',
+                fontWeight: '600',
+                marginBottom: '18px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+              }}
+            >
+              <CheckCircle2 size={18} />
+              <span>{successMessage}</span>
+            </div>
+          )}
+
+          {/* Error Notification */}
+          {errorMessage && (
+            <div
+              style={{
+                backgroundColor: '#fef2f2',
+                border: '1px solid #fecaca',
+                color: '#b91c1c',
+                borderRadius: '10px',
+                padding: '12px 16px',
+                fontSize: '0.9rem',
+                fontWeight: '600',
+                marginBottom: '18px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+              }}
+            >
+              <AlertCircle size={18} />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+        </>
       )}
 
       {/* ============================================================== */}

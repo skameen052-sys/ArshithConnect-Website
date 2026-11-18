@@ -393,7 +393,7 @@ export default function AdminMeetingManagement() {
             description="No scheduled meetings match your current search and filter criteria."
           />
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 320px), 1fr))', gap: '16px' }}>
             {filteredMeetings.map((item) => {
               const isCancelled = item.status === 'Cancelled';
               return (

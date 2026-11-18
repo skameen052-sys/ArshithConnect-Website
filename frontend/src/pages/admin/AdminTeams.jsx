@@ -40,9 +40,13 @@ export default function AdminTeams() {
     loadData();
   }, []);
 
-  const handleToggleEmployee = (empName) => {
+  const getEmpKey = (emp) => String(emp.uid || emp.id || emp.employee_id || emp.email || emp.name || '').trim();
+
+  const handleToggleEmployee = (emp) => {
+    const key = getEmpKey(emp);
+    if (!key) return;
     setSelectedEmployees((prev) =>
-      prev.includes(empName) ? prev.filter((name) => name !== empName) : [...prev, empName]
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
     );
   };
 
@@ -73,15 +77,22 @@ export default function AdminTeams() {
 
     try {
       setIsSubmitting(true);
+      const selectedEmpObjects = availableEmployees.filter((emp) =>
+        selectedEmployees.includes(getEmpKey(emp))
+      );
+      const memberNames = selectedEmpObjects.map((emp) => emp.name || emp.fullName || getEmpKey(emp));
+      const memberIds = selectedEmpObjects.map((emp) => getEmpKey(emp));
+
       await teamService.createTeam({
         teamName: trimmedName,
         department: 'Operations',
-        members: selectedEmployees,
+        members: memberNames,
+        memberIds,
       });
 
       setTeamName('');
       setSelectedEmployees([]);
-      setSuccessMessage(`Team "${trimmedName}" successfully created in database.`);
+      setSuccessMessage(`Team "${trimmedName}" successfully created and synced to App & Chat.`);
       setTimeout(() => setSuccessMessage(''), 3500);
       loadData();
     } catch (err) {
@@ -232,11 +243,12 @@ export default function AdminTeams() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {availableEmployees.map((emp) => {
                   const name = emp.name || emp.fullName || '';
-                  const isChecked = selectedEmployees.includes(name);
+                  const key = getEmpKey(emp);
+                  const isChecked = selectedEmployees.includes(key);
 
                   return (
                     <label
-                      key={emp.id || emp.email}
+                      key={emp.id || emp.email || key}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -253,7 +265,7 @@ export default function AdminTeams() {
                       <input
                         type="checkbox"
                         checked={isChecked}
-                        onChange={() => handleToggleEmployee(name)}
+                        onChange={() => handleToggleEmployee(emp)}
                         disabled={isSubmitting}
                         style={{
                           width: '18px',

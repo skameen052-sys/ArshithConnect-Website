@@ -1,5 +1,6 @@
 import React from 'react';
 import { Navigate, Outlet } from 'react-router-dom';
+import { hasActiveAuthStorage } from '../utils/authSession';
 
 /**
  * HrProjectsProtectedRoute - Guards Project & Team Operations HR routes
@@ -7,11 +8,7 @@ import { Navigate, Outlet } from 'react-router-dom';
  * Redirects unauthenticated users to /hr-projects/login.
  */
 export default function HrProjectsProtectedRoute() {
-  const role = localStorage.getItem('arshith_role');
-  const user = localStorage.getItem('arshith_user');
-  const token = localStorage.getItem('arshith_auth_token');
-
-  if (!role || !user || !token || (role !== 'hr_projects' && role !== 'admin' && role !== 'hr')) {
+  if (!hasActiveAuthStorage(['hr_projects', 'admin', 'hr'])) {
     return <Navigate to="/hr-projects/login" replace />;
   }
 

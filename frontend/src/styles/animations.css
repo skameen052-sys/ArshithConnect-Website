@@ -219,23 +219,164 @@
   animation: modalSpringIn 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-/* Smooth Interactive Card Lift */
+/* Smooth Interactive Card Lift + Cyan/Sky Blue Traveling Border Sweep */
+@property --travel-border-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes travelBorderRotate {
+  from {
+    --travel-border-angle: 0deg;
+  }
+  to {
+    --travel-border-angle: 360deg;
+  }
+}
+
+.travel-border-card,
 .card-hover-lift,
 .dashboard-card,
 .attendance-summary-card,
+.attendance-main-card,
+.attendance-verified-photo-card,
 .stat-card,
+.admin-stat-card,
 .metric-card,
 .quick-action-card,
+.management-nav-card,
+.management-card,
+.management-page-card,
+.admin-action-card,
+.meeting-feature-card,
+.announcement-item-card,
+.hrms-card,
+.hrms-metric-card,
+.hr-table-card,
+.admin-attendance-records-card,
+.office-timings-form-card,
+.assignment-card,
+.assignment-form-card,
 .work-update-card {
-  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), 
-              box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1),
-              border-color 0.22s ease !important;
+  position: relative;
+  transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 300ms cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 300ms ease !important;
 }
 
-.card-hover-lift:hover,
-.quick-action-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 10px 24px -4px rgba(15, 23, 42, 0.08) !important;
+.travel-border-card {
+  background-color: #ffffff;
+}
+
+.travel-border-card::before,
+.card-hover-lift::before,
+.dashboard-card::before,
+.attendance-summary-card::before,
+.attendance-main-card::before,
+.attendance-verified-photo-card::before,
+.stat-card::before,
+.admin-stat-card::before,
+.metric-card::before,
+.quick-action-card::before,
+.management-nav-card::before,
+.management-card::before,
+.management-page-card::before,
+.admin-action-card::before,
+.meeting-feature-card::before,
+.announcement-item-card::before,
+.hrms-card::before,
+.hrms-metric-card::before,
+.hr-table-card::before,
+.admin-attendance-records-card::before,
+.office-timings-form-card::before,
+.assignment-card::before,
+.assignment-form-card::before,
+.work-update-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 2px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from var(--travel-border-angle),
+    transparent 0deg,
+    transparent 215deg,
+    rgba(6, 182, 212, 0.35) 250deg,
+    #06B6D4 295deg,
+    #38BDF8 330deg,
+    #67E8F9 352deg,
+    transparent 360deg
+  );
+  -webkit-mask: linear-gradient(#ffffff 0 0) content-box, linear-gradient(#ffffff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#ffffff 0 0) content-box, linear-gradient(#ffffff 0 0);
+  mask-composite: exclude;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 2;
+  transition: opacity 300ms ease;
+  animation: none;
+}
+
+@media (hover: hover) {
+  .travel-border-card:hover,
+  .card-hover-lift:hover,
+  .dashboard-card:hover,
+  .attendance-summary-card:hover,
+  .attendance-main-card:hover,
+  .attendance-verified-photo-card:hover,
+  .stat-card:hover,
+  .admin-stat-card:hover,
+  .metric-card:hover,
+  .quick-action-card:hover,
+  .management-nav-card:hover,
+  .management-card:hover,
+  .management-page-card:hover,
+  .admin-action-card:hover,
+  .meeting-feature-card:hover,
+  .announcement-item-card:hover,
+  .hrms-card:hover,
+  .hrms-metric-card:hover,
+  .hr-table-card:hover,
+  .admin-attendance-records-card:hover,
+  .office-timings-form-card:hover,
+  .assignment-card:hover,
+  .assignment-form-card:hover,
+  .work-update-card:hover {
+    transform: translateY(-4px) !important;
+    box-shadow: 0 12px 28px -6px rgba(6, 182, 212, 0.20),
+                0 6px 16px -4px rgba(56, 189, 248, 0.18),
+                0 4px 10px rgba(15, 23, 42, 0.04) !important;
+  }
+
+  .travel-border-card:hover::before,
+  .card-hover-lift:hover::before,
+  .dashboard-card:hover::before,
+  .attendance-summary-card:hover::before,
+  .attendance-main-card:hover::before,
+  .attendance-verified-photo-card:hover::before,
+  .stat-card:hover::before,
+  .admin-stat-card:hover::before,
+  .metric-card:hover::before,
+  .quick-action-card:hover::before,
+  .management-nav-card:hover::before,
+  .management-card:hover::before,
+  .management-page-card:hover::before,
+  .admin-action-card:hover::before,
+  .meeting-feature-card:hover::before,
+  .announcement-item-card:hover::before,
+  .hrms-card:hover::before,
+  .hrms-metric-card:hover::before,
+  .hr-table-card:hover::before,
+  .admin-attendance-records-card:hover::before,
+  .office-timings-form-card:hover::before,
+  .assignment-card:hover::before,
+  .assignment-form-card:hover::before,
+  .work-update-card:hover::before {
+    opacity: 1;
+    animation: travelBorderRotate 2s linear infinite;
+  }
 }
 
 /* Interactive Button Click Micro-pop */
@@ -488,6 +629,60 @@ textarea:focus {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+  }
+
+  .travel-border-card:hover,
+  .card-hover-lift:hover,
+  .dashboard-card:hover,
+  .attendance-summary-card:hover,
+  .attendance-main-card:hover,
+  .attendance-verified-photo-card:hover,
+  .stat-card:hover,
+  .admin-stat-card:hover,
+  .metric-card:hover,
+  .quick-action-card:hover,
+  .management-nav-card:hover,
+  .management-card:hover,
+  .management-page-card:hover,
+  .admin-action-card:hover,
+  .meeting-feature-card:hover,
+  .announcement-item-card:hover,
+  .hrms-card:hover,
+  .hrms-metric-card:hover,
+  .hr-table-card:hover,
+  .admin-attendance-records-card:hover,
+  .office-timings-form-card:hover,
+  .assignment-card:hover,
+  .assignment-form-card:hover,
+  .work-update-card:hover {
+    transform: none !important;
+  }
+
+  .travel-border-card::before,
+  .card-hover-lift::before,
+  .dashboard-card::before,
+  .attendance-summary-card::before,
+  .attendance-main-card::before,
+  .attendance-verified-photo-card::before,
+  .stat-card::before,
+  .admin-stat-card::before,
+  .metric-card::before,
+  .quick-action-card::before,
+  .management-nav-card::before,
+  .management-card::before,
+  .management-page-card::before,
+  .admin-action-card::before,
+  .meeting-feature-card::before,
+  .announcement-item-card::before,
+  .hrms-card::before,
+  .hrms-metric-card::before,
+  .hr-table-card::before,
+  .admin-attendance-records-card::before,
+  .office-timings-form-card::before,
+  .assignment-card::before,
+  .assignment-form-card::before,
+  .work-update-card::before {
+    animation: none !important;
   }
 }
 

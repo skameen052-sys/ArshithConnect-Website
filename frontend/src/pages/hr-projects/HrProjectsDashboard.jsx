@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   XCircle,
   Plus,
+  PlusCircle,
   Users,
   UserCheck,
   Activity,
@@ -31,7 +32,7 @@ import teamService from '../../services/teamService';
 import { employeeService } from '../../services/employeeService';
 import { authService } from '../../services/authService';
 
-export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChange }) {
+export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChange, openAddProjectSignal }) {
   const [currentTab, setCurrentTab] = useState(activeTab);
   const [projects, setProjects] = useState([]);
   const [teams, setTeams] = useState([]);
@@ -133,19 +134,60 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
     department: 'Engineering',
     description: '',
     leader: '',
+    memberKeys: [],
   });
+  const [teamMemberSearch, setTeamMemberSearch] = useState('');
+  const [isCreatingTeam, setIsCreatingTeam] = useState(false);
 
   const [selectedLeaderName, setSelectedLeaderName] = useState('');
   const [selectedEmployeesList, setSelectedEmployeesList] = useState([]);
   const [progressInput, setProgressInput] = useState(0);
   const [statusInput, setStatusInput] = useState('In Progress');
 
+  // Handle opening Add Project modal from sidebar or top navigation
+  useEffect(() => {
+    if (openAddProjectSignal > 0) {
+      setIsAddModalOpen(true);
+    }
+  }, [openAddProjectSignal]);
+
+  // Always refresh approved leaders and employees when Add, Assign Leader, or Create Team modal opens
+  useEffect(() => {
+    if (isAddModalOpen || isAssignLeaderModalOpen || isCreateTeamModalOpen) {
+      projectService.getApprovedLeaders().then((res) => {
+        if (Array.isArray(res) && res.length > 0) {
+          setApprovedLeaders(res);
+        }
+      }).catch((err) => console.warn('Could not refresh approved leaders', err));
+
+      projectService.getApprovedEmployees().then((res) => {
+        if (Array.isArray(res) && res.length > 0) {
+          setApprovedEmployees(res);
+        }
+      }).catch((err) => console.warn('Could not refresh approved employees', err));
+
+      if (isCreateTeamModalOpen) {
+        employeeService.getEmployees().then((res) => {
+          if (Array.isArray(res) && res.length > 0) {
+            setEmployees(res);
+          }
+        }).catch((err) => console.warn('Could not refresh employees', err));
+      }
+    }
+  }, [isAddModalOpen, isAssignLeaderModalOpen, isCreateTeamModalOpen]);
+
   // Sync with prop if passed
   useEffect(() => {
-    if (activeTab) {
+    if (activeTab === 'add-project') {
+      setIsAddModalOpen(true);
+      setCurrentTab('dashboard');
+      if (onTabChange) {
+        onTabChange('dashboard');
+      }
+    } else if (activeTab) {
       setCurrentTab(activeTab);
     }
-  }, [activeTab]);
+  }, [activeTab, onTabChange]);
 
   const switchTab = (tab) => {
     setCurrentTab(tab);
@@ -388,24 +430,64 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
     }
   };
 
+  // Merge all registered employees cleanly for the Create Team member selector
+  const allTeamEmployees = React.useMemo(() => {
+    const combined = [...(Array.isArray(employees) ? employees : []), ...(Array.isArray(approvedEmployees) ? approvedEmployees : [])];
+    const seen = new Set();
+    const list = [];
+    for (const emp of combined) {
+      if (!emp) continue;
+      const name = String(emp.name || emp.fullName || emp.full_name || '').trim();
+      if (!name || name.toLowerCase() === 'unnamed employee') continue;
+      const key = String(emp.uid || emp.id || emp.employee_id || emp.employeeId || emp.email || name).trim();
+      const dedupKey = String(emp.email || emp.employee_id || emp.employeeId || name).trim().toLowerCase();
+      if (seen.has(dedupKey)) continue;
+      seen.add(dedupKey);
+      list.push({
+        ...emp,
+        _memberKey: key,
+        _displayName: name,
+      });
+    }
+    list.sort((a, b) => a._displayName.localeCompare(b._displayName));
+    return list;
+  }, [employees, approvedEmployees]);
+
   // 9. Create Team
   const handleCreateTeam = async (e) => {
     e.preventDefault();
+    if (isCreatingTeam) return;
     if (!teamForm.teamName.trim()) return;
 
+    const selectedEmps = allTeamEmployees.filter((emp) => teamForm.memberKeys.includes(emp._memberKey));
+    const memberNames = selectedEmps.map((emp) => emp._displayName);
+    const memberIds = selectedEmps.map((emp) => emp._memberKey);
+    const cleanLeader = (teamForm.leader || '').trim();
+
+    if (cleanLeader && !memberNames.some((n) => n.toLowerCase() === cleanLeader.toLowerCase())) {
+      memberNames.push(cleanLeader);
+    }
+
     try {
+      setIsCreatingTeam(true);
       await teamService.createTeam({
         teamName: teamForm.teamName.trim(),
         department: teamForm.department,
         description: teamForm.description,
-        leader: teamForm.leader || null,
-        members: teamForm.leader ? [teamForm.leader] : [],
+        leader: cleanLeader || null,
+        members: memberNames,
+        memberIds,
+        syncToChat: false,
+        source: 'project_hr',
       });
       setIsCreateTeamModalOpen(false);
-      setTeamForm({ teamName: '', department: 'Engineering', description: '', leader: '' });
+      setTeamMemberSearch('');
+      setTeamForm({ teamName: '', department: 'Engineering', description: '', leader: '', memberKeys: [] });
       await loadAllData();
     } catch (err) {
       alert(err.message || 'Failed to create team');
+    } finally {
+      setIsCreatingTeam(false);
     }
   };
 
@@ -476,7 +558,7 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
       </div>
 
       {/* ========================================================= */}
-      {/* 6 KPI Metric Cards (Matching Admin Stat Card Design)      */}
+      {/* 6 KPI Metric Cards (Interactive Navigation Shortcuts)      */}
       {/* ========================================================= */}
       <section style={{ marginBottom: '24px' }}>
         <div className="admin-today-stats-grid">
@@ -485,36 +567,48 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
             value={totalProjectsCount}
             colorClass="stat-val-present"
             widthClass="full-width"
+            onClick={() => switchTab('dashboard')}
+            title="Click to view all projects"
           />
           <AdminStatCard
             label="IN PROGRESS"
             value={inProgressCount}
             colorClass="stat-val-wfo"
             widthClass="one-third"
+            onClick={() => { setStatusFilter('In Progress'); switchTab('dashboard'); }}
+            title="Click to filter In Progress projects"
           />
           <AdminStatCard
             label="COMPLETED"
             value={completedProjectsCount}
             colorClass="stat-val-present"
             widthClass="one-third"
+            onClick={() => { setStatusFilter('Completed'); switchTab('dashboard'); }}
+            title="Click to filter Completed projects"
           />
           <AdminStatCard
             label="AVG PROGRESS"
             value={`${avgProgress}%`}
             colorClass="stat-val-late"
             widthClass="one-third"
+            onClick={() => switchTab('progress')}
+            title="Click to monitor project progress"
           />
           <AdminStatCard
             label="PENDING TL APPROVALS"
             value={pendingApprovalsCount}
             colorClass="stat-val-pending"
             widthClass="half-width"
+            onClick={() => switchTab('team-leaders')}
+            title="Click to review Team Leader nominations"
           />
           <AdminStatCard
             label="ACTIVE TEAMS"
             value={totalTeamsCount}
             colorClass="stat-val-holiday"
             widthClass="half-width"
+            onClick={() => switchTab('teams')}
+            title="Click to manage departmental teams"
           />
         </div>
       </section>
@@ -534,18 +628,29 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
       >
         {[
           { key: 'dashboard', label: 'All Projects', icon: FolderKanban },
-          { key: 'team-leaders', label: `Team Leader Approvals (${pendingApprovalsCount})`, icon: CheckCircle2 },
+          { key: 'add-project', label: '+ Add New Project', icon: PlusCircle, isAction: true },
+          { key: 'team-leaders', label: `Approve TL (${pendingApprovalsCount})`, icon: CheckCircle2 },
+          { key: 'assign-leaders', label: 'Assign Team Leaders', icon: UserCheck },
+          { key: 'assign-employees', label: 'Assign Employees', icon: Users },
           { key: 'teams', label: `Teams Management (${totalTeamsCount})`, icon: Users },
           { key: 'progress', label: 'Monitor Progress', icon: Activity },
           { key: 'reports', label: 'Project Reports', icon: BarChart3 },
         ].map((tab) => {
-          const isActive = currentTab === tab.key;
+          const isActive =
+            currentTab === tab.key ||
+            (tab.key === 'dashboard' && currentTab === 'projects');
           const IconC = tab.icon;
           return (
             <button
               key={tab.key}
               type="button"
-              onClick={() => switchTab(tab.key)}
+              onClick={() => {
+                if (tab.key === 'add-project') {
+                  setIsAddModalOpen(true);
+                } else {
+                  switchTab(tab.key);
+                }
+              }}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -554,15 +659,15 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
                 borderRadius: '8px',
                 fontSize: '0.85rem',
                 fontWeight: isActive ? '700' : '600',
-                color: isActive ? '#0b3d2b' : '#64748b',
-                backgroundColor: isActive ? '#e6f4ea' : 'transparent',
-                border: 'none',
+                color: isActive ? '#0b3d2b' : (tab.key === 'add-project' ? '#047857' : '#64748b'),
+                backgroundColor: isActive ? '#e6f4ea' : (tab.key === 'add-project' ? '#f0fdf4' : 'transparent'),
+                border: tab.key === 'add-project' ? '1px dashed #059669' : 'none',
                 cursor: 'pointer',
                 whiteSpace: 'nowrap',
                 transition: 'all 0.15s ease',
               }}
             >
-              <IconC size={16} color={isActive ? '#0b3d2b' : '#64748b'} />
+              <IconC size={16} color={isActive ? '#0b3d2b' : (tab.key === 'add-project' ? '#047857' : '#64748b')} />
               <span>{tab.label}</span>
             </button>
           );
@@ -576,7 +681,7 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
         <section>
           {/* Controls Bar */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: '260px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 'min(100%, 260px)' }}>
               <div style={{ position: 'relative', width: '100%', maxWidth: '380px' }}>
                 <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
                 <input
@@ -624,7 +729,7 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
 
           {/* Projects Grid */}
           {filteredProjects.length === 0 ? (
-            <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', padding: '40px 20px', textAlign: 'center', border: '1px solid #e2e8f0' }}>
+            <div className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '12px', padding: '40px 20px', textAlign: 'center', border: '1px solid #e2e8f0' }}>
               <FolderKanban size={40} color="#cbd5e1" style={{ margin: '0 auto 10px' }} />
               <h3 style={{ fontSize: '1rem', color: '#334155', margin: '0 0 4px' }}>No Projects Found</h3>
               <p style={{ fontSize: '0.825rem', color: '#64748b', margin: 0 }}>
@@ -632,7 +737,7 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
               </p>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '16px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 360px), 1fr))', gap: '16px' }}>
               {filteredProjects.map((proj) => {
                 const isLeaderApproved = proj.team_leader_approval_status === 'APPROVED';
                 const isCompleted = proj.status === 'Completed' || proj.progress >= 100;
@@ -640,6 +745,7 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
                 return (
                   <div
                     key={proj.id}
+                    className="travel-border-card"
                     style={{
                       backgroundColor: '#ffffff',
                       borderRadius: '14px',
@@ -881,7 +987,7 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
       {/* TAB 2: APPROVE / REJECT TEAM LEADER (REQ 2)               */}
       {/* ========================================================= */}
       {currentTab === 'team-leaders' && (
-        <section style={{ backgroundColor: '#ffffff', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '20px' }}>
+        <section className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '20px' }}>
           <div style={{ marginBottom: '16px' }}>
             <h2 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0b3d2b', margin: '0 0 4px' }}>
               Team Leader Approvals & Reviews
@@ -1026,10 +1132,393 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
       )}
 
       {/* ========================================================= */}
+      {/* TAB: ASSIGN TEAM LEADERS (REQ 7)                          */}
+      {/* ========================================================= */}
+      {currentTab === 'assign-leaders' && (
+        <section className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+            <div>
+              <h2 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0b3d2b', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <UserCheck size={22} color="#0f766e" />
+                Assign Team Leaders to Projects
+              </h2>
+              <p style={{ fontSize: '0.825rem', color: '#64748b', margin: 0 }}>
+                Delegate verified Team Leaders to direct sprint deliverables, manage milestones, and guide project staff.
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => switchTab('team-leaders')}
+                style={{
+                  padding: '7px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  backgroundColor: '#ffffff',
+                  color: '#334155',
+                  fontSize: '0.8rem',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <CheckCircle2 size={14} color="#047857" />
+                Review Nominations ({pendingApprovalsCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => switchTab('dashboard')}
+                style={{
+                  padding: '7px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  backgroundColor: '#ffffff',
+                  color: '#334155',
+                  fontSize: '0.8rem',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <FolderKanban size={14} />
+                All Projects
+              </button>
+            </div>
+          </div>
+
+          {/* KPI Quick Metrics Row */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '16px' }}>
+            <div style={{ padding: '12px 14px', backgroundColor: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+              <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Total Projects</div>
+              <div style={{ fontSize: '1.3rem', fontWeight: '800', color: '#0b3d2b' }}>{projects.length}</div>
+            </div>
+            <div style={{ padding: '12px 14px', backgroundColor: '#ecfdf5', borderRadius: '10px', border: '1px solid #a7f3d0' }}>
+              <div style={{ fontSize: '0.72rem', color: '#047857', fontWeight: '700', textTransform: 'uppercase' }}>TL Allocated</div>
+              <div style={{ fontSize: '1.3rem', fontWeight: '800', color: '#065f46' }}>
+                {projects.filter((p) => p.team_leader && p.team_leader !== 'Unassigned').length}
+              </div>
+            </div>
+            <div style={{ padding: '12px 14px', backgroundColor: '#fffbeb', borderRadius: '10px', border: '1px solid #fde68a' }}>
+              <div style={{ fontSize: '0.72rem', color: '#b45309', fontWeight: '700', textTransform: 'uppercase' }}>Pending Allocation</div>
+              <div style={{ fontSize: '1.3rem', fontWeight: '800', color: '#92400e' }}>
+                {projects.filter((p) => !p.team_leader || p.team_leader === 'Unassigned').length}
+              </div>
+            </div>
+            <div style={{ padding: '12px 14px', backgroundColor: '#f0fdfa', borderRadius: '10px', border: '1px solid #99f6e4' }}>
+              <div style={{ fontSize: '0.72rem', color: '#0f766e', fontWeight: '700', textTransform: 'uppercase' }}>Approved Leaders Pool</div>
+              <div style={{ fontSize: '1.3rem', fontWeight: '800', color: '#115e59' }}>{approvedLeaders.length}</div>
+            </div>
+          </div>
+
+          {/* Search Controls */}
+          <div style={{ marginBottom: '14px', display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <div style={{ position: 'relative', flex: 1, maxWidth: '380px' }}>
+              <Search size={15} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+              <input
+                type="text"
+                placeholder="Search by project name, ID, or current leader..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={{ width: '100%', padding: '8px 12px 8px 34px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem', outline: 'none' }}
+              />
+            </div>
+          </div>
+
+          {/* Table */}
+          {filteredProjects.length === 0 ? (
+            <div style={{ padding: '36px 0', textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem' }}>
+              No projects matching search criteria.
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', color: '#475569' }}>
+                    <th style={{ padding: '10px 14px', fontWeight: '700' }}>Project Details</th>
+                    <th style={{ padding: '10px 14px', fontWeight: '700' }}>Department</th>
+                    <th style={{ padding: '10px 14px', fontWeight: '700' }}>Assigned Team Leader</th>
+                    <th style={{ padding: '10px 14px', fontWeight: '700' }}>Deadline & Status</th>
+                    <th style={{ padding: '10px 14px', fontWeight: '700', textAlign: 'right' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredProjects.map((proj) => {
+                    const hasLeader = proj.team_leader && proj.team_leader !== 'Unassigned';
+                    return (
+                      <tr key={proj.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '12px 14px' }}>
+                          <div style={{ fontWeight: '700', color: '#0b3d2b', fontSize: '0.9rem' }}>{proj.name}</div>
+                          <div style={{ fontSize: '0.74rem', color: '#64748b', display: 'flex', gap: '8px', marginTop: '2px' }}>
+                            <span style={{ backgroundColor: '#f1f5f9', padding: '1px 6px', borderRadius: '4px', fontWeight: '600' }}>{proj.id}</span>
+                            <span>{proj.team_name || 'Project Team'}</span>
+                          </div>
+                        </td>
+                        <td style={{ padding: '12px 14px', color: '#334155', fontWeight: '600' }}>
+                          {proj.department || 'Operations'}
+                        </td>
+                        <td style={{ padding: '12px 14px' }}>
+                          {hasLeader ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <div style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: '#0b3d2b', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: '700' }}>
+                                {proj.team_leader.charAt(0).toUpperCase()}
+                              </div>
+                              <div>
+                                <div style={{ fontWeight: '700', color: '#1e293b' }}>{proj.team_leader}</div>
+                                <span style={{ fontSize: '0.7rem', color: '#047857', fontWeight: '600' }}>✓ Active Leader</span>
+                              </div>
+                            </div>
+                          ) : (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: '6px', fontSize: '0.74rem', fontWeight: '700', backgroundColor: '#fef3c7', color: '#b45309' }}>
+                              <AlertCircle size={12} />
+                              Unassigned
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ padding: '12px 14px' }}>
+                          <div style={{ fontSize: '0.8rem', color: '#334155' }}>{proj.deadline || 'Ongoing'}</div>
+                          <span style={{ fontSize: '0.7rem', padding: '1px 6px', borderRadius: '4px', backgroundColor: proj.status === 'Completed' ? '#dcfce7' : '#eff6ff', color: proj.status === 'Completed' ? '#15803d' : '#1d4ed8', fontWeight: '700' }}>
+                            {proj.status || 'In Progress'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '12px 14px', textAlign: 'right' }}>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenAssignLeader(proj)}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              padding: '6px 12px',
+                              borderRadius: '6px',
+                              backgroundColor: hasLeader ? '#f8fafc' : '#0b3d2b',
+                              color: hasLeader ? '#0b3d2b' : '#ffffff',
+                              border: hasLeader ? '1px solid #cbd5e1' : 'none',
+                              fontSize: '0.78rem',
+                              fontWeight: '700',
+                              cursor: 'pointer',
+                              transition: 'all 0.15s ease',
+                            }}
+                          >
+                            <UserCheck size={14} />
+                            <span>{hasLeader ? 'Change Leader' : 'Assign Leader'}</span>
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ========================================================= */}
+      {/* TAB: ASSIGN EMPLOYEES (REQ 8)                             */}
+      {/* ========================================================= */}
+      {currentTab === 'assign-employees' && (
+        <section className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+            <div>
+              <h2 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0b3d2b', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Users size={22} color="#0b3d2b" />
+                Assign Employees to Projects
+              </h2>
+              <p style={{ fontSize: '0.825rem', color: '#64748b', margin: 0 }}>
+                Allocate registered employees, specialists, and developers to active sprint deliverables.
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => switchTab('teams')}
+                style={{
+                  padding: '7px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  backgroundColor: '#ffffff',
+                  color: '#334155',
+                  fontSize: '0.8rem',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <Users size={14} color="#0f766e" />
+                Manage Teams ({totalTeamsCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => switchTab('dashboard')}
+                style={{
+                  padding: '7px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  backgroundColor: '#ffffff',
+                  color: '#334155',
+                  fontSize: '0.8rem',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <FolderKanban size={14} />
+                All Projects
+              </button>
+            </div>
+          </div>
+
+          {/* Headcount Quick Metrics Row */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '16px' }}>
+            <div style={{ padding: '12px 14px', backgroundColor: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+              <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Total Projects</div>
+              <div style={{ fontSize: '1.3rem', fontWeight: '800', color: '#0b3d2b' }}>{projects.length}</div>
+            </div>
+            <div style={{ padding: '12px 14px', backgroundColor: '#ecfdf5', borderRadius: '10px', border: '1px solid #a7f3d0' }}>
+              <div style={{ fontSize: '0.72rem', color: '#047857', fontWeight: '700', textTransform: 'uppercase' }}>Total Staff Allocated</div>
+              <div style={{ fontSize: '1.3rem', fontWeight: '800', color: '#065f46' }}>
+                {projects.reduce((acc, p) => acc + (p.assigned_employees?.length || 0), 0)}
+              </div>
+            </div>
+            <div style={{ padding: '12px 14px', backgroundColor: '#f0fdfa', borderRadius: '10px', border: '1px solid #99f6e4' }}>
+              <div style={{ fontSize: '0.72rem', color: '#0f766e', fontWeight: '700', textTransform: 'uppercase' }}>Fully Staffed Projects</div>
+              <div style={{ fontSize: '1.3rem', fontWeight: '800', color: '#115e59' }}>
+                {projects.filter((p) => (p.assigned_employees?.length || 0) > 0).length}
+              </div>
+            </div>
+            <div style={{ padding: '12px 14px', backgroundColor: '#eff6ff', borderRadius: '10px', border: '1px solid #bfdbfe' }}>
+              <div style={{ fontSize: '0.72rem', color: '#1d4ed8', fontWeight: '700', textTransform: 'uppercase' }}>Roster Staff Pool</div>
+              <div style={{ fontSize: '1.3rem', fontWeight: '800', color: '#1e40af' }}>{approvedEmployees.length}</div>
+            </div>
+          </div>
+
+          {/* Search Controls */}
+          <div style={{ marginBottom: '14px', display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <div style={{ position: 'relative', flex: 1, maxWidth: '380px' }}>
+              <Search size={15} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+              <input
+                type="text"
+                placeholder="Search by project name, ID, or employee name..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={{ width: '100%', padding: '8px 12px 8px 34px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem', outline: 'none' }}
+              />
+            </div>
+          </div>
+
+          {/* Table */}
+          {filteredProjects.length === 0 ? (
+            <div style={{ padding: '36px 0', textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem' }}>
+              No projects matching search criteria.
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', color: '#475569' }}>
+                    <th style={{ padding: '10px 14px', fontWeight: '700' }}>Project Details</th>
+                    <th style={{ padding: '10px 14px', fontWeight: '700' }}>Lead Team Leader</th>
+                    <th style={{ padding: '10px 14px', fontWeight: '700' }}>Assigned Staff Members</th>
+                    <th style={{ padding: '10px 14px', fontWeight: '700' }}>Progress</th>
+                    <th style={{ padding: '10px 14px', fontWeight: '700', textAlign: 'right' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredProjects.map((proj) => {
+                    const assignedList = proj.assigned_employees || [];
+                    return (
+                      <tr key={proj.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '12px 14px' }}>
+                          <div style={{ fontWeight: '700', color: '#0b3d2b', fontSize: '0.9rem' }}>{proj.name}</div>
+                          <div style={{ fontSize: '0.74rem', color: '#64748b', display: 'flex', gap: '8px', marginTop: '2px' }}>
+                            <span style={{ backgroundColor: '#f1f5f9', padding: '1px 6px', borderRadius: '4px', fontWeight: '600' }}>{proj.id}</span>
+                            <span>{proj.department || 'Operations'}</span>
+                          </div>
+                        </td>
+                        <td style={{ padding: '12px 14px' }}>
+                          <span style={{ fontSize: '0.83rem', fontWeight: '600', color: '#1e293b' }}>
+                            {proj.team_leader && proj.team_leader !== 'Unassigned' ? proj.team_leader : 'Unassigned'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '12px 14px' }}>
+                          {assignedList.length === 0 ? (
+                            <span style={{ fontSize: '0.75rem', color: '#b45309', fontWeight: '600', backgroundColor: '#fef3c7', padding: '2px 8px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                              <AlertCircle size={12} />
+                              No staff assigned yet
+                            </span>
+                          ) : (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', maxWidth: '340px' }}>
+                              {assignedList.slice(0, 3).map((emp, idx) => (
+                                <span key={idx} style={{ fontSize: '0.72rem', backgroundColor: '#ecfdf5', color: '#065f46', padding: '2px 7px', borderRadius: '4px', fontWeight: '600', border: '1px solid #a7f3d0' }}>
+                                  {emp}
+                                </span>
+                              ))}
+                              {assignedList.length > 3 && (
+                                <span style={{ fontSize: '0.72rem', backgroundColor: '#f1f5f9', color: '#475569', padding: '2px 6px', borderRadius: '4px', fontWeight: '700' }}>
+                                  +{assignedList.length - 3} more
+                                </span>
+                              )}
+                              <span style={{ fontSize: '0.7rem', color: '#64748b', marginLeft: '4px', alignSelf: 'center' }}>
+                                ({assignedList.length} total)
+                              </span>
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ padding: '12px 14px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <div style={{ flex: 1, minWidth: '60px', height: '6px', borderRadius: '3px', backgroundColor: '#e2e8f0', overflow: 'hidden' }}>
+                              <div style={{ width: `${proj.progress || 0}%`, height: '100%', backgroundColor: '#0b3d2b', borderRadius: '3px' }} />
+                            </div>
+                            <span style={{ fontSize: '0.74rem', fontWeight: '700', color: '#0b3d2b' }}>{proj.progress || 0}%</span>
+                          </div>
+                        </td>
+                        <td style={{ padding: '12px 14px', textAlign: 'right' }}>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenAssignEmployees(proj)}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              padding: '6px 12px',
+                              borderRadius: '6px',
+                              backgroundColor: '#0b3d2b',
+                              color: '#ffffff',
+                              border: 'none',
+                              fontSize: '0.78rem',
+                              fontWeight: '700',
+                              cursor: 'pointer',
+                              boxShadow: '0 2px 4px rgba(11,61,43,0.15)',
+                              transition: 'all 0.15s ease',
+                            }}
+                          >
+                            <Users size={14} />
+                            <span>Assign Staff</span>
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ========================================================= */}
       {/* TAB 3: CREATE & MANAGE TEAMS (REQ 9)                      */}
       {/* ========================================================= */}
       {currentTab === 'teams' && (
-        <section style={{ backgroundColor: '#ffffff', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '20px' }}>
+        <section className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
             <div>
               <h2 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0b3d2b', margin: '0 0 4px' }}>
@@ -1099,7 +1588,7 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
       {/* TAB 4: MONITOR PROJECT PROGRESS (REQ 10)                  */}
       {/* ========================================================= */}
       {currentTab === 'progress' && (
-        <section style={{ backgroundColor: '#ffffff', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '20px' }}>
+        <section className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '20px' }}>
           <div style={{ marginBottom: '16px' }}>
             <h2 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0b3d2b', margin: '0 0 4px' }}>
               Live Project Progress Tracker
@@ -1125,7 +1614,7 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
                   gap: '12px',
                 }}
               >
-                <div style={{ minWidth: '220px' }}>
+                <div style={{ minWidth: 'min(100%, 220px)' }}>
                   <div style={{ fontSize: '0.925rem', fontWeight: '700', color: '#0b3d2b' }}>
                     {proj.name}
                   </div>
@@ -1134,7 +1623,7 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
                   </div>
                 </div>
 
-                <div style={{ flex: 1, minWidth: '220px', maxWidth: '400px' }}>
+                <div style={{ flex: 1, minWidth: 'min(100%, 220px)', maxWidth: '400px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', fontWeight: '700', marginBottom: '4px' }}>
                     <span>{proj.status}</span>
                     <span>{proj.progress}%</span>
@@ -1177,7 +1666,7 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
       {/* TAB 5: VIEW PROJECT REPORTS (REQ 11)                      */}
       {/* ========================================================= */}
       {currentTab === 'reports' && (
-        <section style={{ backgroundColor: '#ffffff', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '20px' }}>
+        <section className="travel-border-card" style={{ backgroundColor: '#ffffff', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
             <div>
               <h2 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0b3d2b', margin: '0 0 4px' }}>
@@ -1400,15 +1889,28 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
               <select
                 required
                 value={projectForm.team_leader}
-                onChange={(e) => setProjectForm({ ...projectForm, team_leader: e.target.value })}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  const selected = approvedLeaders.find((tl) => (tl.name || tl.full_name) === val || tl.id === val || tl.email === val);
+                  setProjectForm({
+                    ...projectForm,
+                    team_leader: selected?.name || selected?.full_name || val,
+                    team_leader_id: selected?.id || selected?.team_leader_id || '',
+                    team_leader_email: selected?.email || '',
+                    department: selected?.department || projectForm.department,
+                  });
+                }}
                 style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.875rem' }}
               >
-                <option value="">-- Select Approved Team Leader --</option>
-                {approvedLeaders.map((tl) => (
-                  <option key={tl.id} value={tl.name}>
-                    {tl.name} ({tl.department || 'Engineering'}) &bull; ID: {tl.id}
-                  </option>
-                ))}
+                <option value="">-- Select Team Leader ({approvedLeaders.length} available) --</option>
+                {approvedLeaders.map((tl) => {
+                  const displayName = tl.name || tl.full_name || 'Team Leader';
+                  return (
+                    <option key={tl.id || tl.email} value={displayName}>
+                      {displayName} ({tl.department || 'Operations'}) &bull; ID: {tl.id || tl.team_leader_id || '--'}
+                    </option>
+                  );
+                })}
               </select>
             </div>
 
@@ -1724,12 +2226,15 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
               onChange={(e) => setSelectedLeaderName(e.target.value)}
               style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.875rem' }}
             >
-              <option value="">-- Choose Approved Team Leader --</option>
-              {approvedLeaders.map((tl) => (
-                <option key={tl.id} value={tl.name}>
-                  {tl.name} ({tl.department || 'Engineering'}) &bull; ID: {tl.id}
-                </option>
-              ))}
+              <option value="">-- Choose Team Leader ({approvedLeaders.length} available) --</option>
+              {approvedLeaders.map((tl) => {
+                const displayName = tl.name || tl.full_name || 'Team Leader';
+                return (
+                  <option key={tl.id || tl.email} value={displayName}>
+                    {displayName} ({tl.department || 'Operations'}) &bull; ID: {tl.id || tl.team_leader_id || '--'}
+                  </option>
+                );
+              })}
             </select>
           </div>
 
@@ -1845,10 +2350,13 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
       {/* ========================================================= */}
       <Modal
         isOpen={isCreateTeamModalOpen}
-        onClose={() => setIsCreateTeamModalOpen(false)}
+        onClose={() => {
+          setIsCreateTeamModalOpen(false);
+          setTeamMemberSearch('');
+        }}
         title="Create New Team"
         subtitle="Group departmental employees under designated leadership"
-        maxWidth="480px"
+        maxWidth="540px"
       >
         <form onSubmit={handleCreateTeam}>
           <div style={{ marginBottom: '14px' }}>
@@ -1861,52 +2369,216 @@ export default function HrProjectsDashboard({ activeTab = 'dashboard', onTabChan
               placeholder="e.g. AI & Innovation Squad"
               value={teamForm.teamName}
               onChange={(e) => setTeamForm({ ...teamForm, teamName: e.target.value })}
-              style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.875rem' }}
+              style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.875rem', boxSizing: 'border-box' }}
             />
           </div>
 
-          <div style={{ marginBottom: '14px' }}>
-            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#334155', marginBottom: '4px' }}>
-              Department
-            </label>
-            <select
-              value={teamForm.department}
-              onChange={(e) => setTeamForm({ ...teamForm, department: e.target.value })}
-              style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.875rem' }}
-            >
-              <option value="Engineering">Engineering</option>
-              <option value="Operations">Operations</option>
-              <option value="Design">Design</option>
-              <option value="Marketing">Marketing</option>
-            </select>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#334155', marginBottom: '4px' }}>
+                Department
+              </label>
+              <select
+                value={teamForm.department}
+                onChange={(e) => setTeamForm({ ...teamForm, department: e.target.value })}
+                style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.875rem', boxSizing: 'border-box' }}
+              >
+                <option value="Engineering">Engineering</option>
+                <option value="Operations">Operations</option>
+                <option value="Design">Design</option>
+                <option value="Marketing">Marketing</option>
+              </select>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#334155', marginBottom: '4px' }}>
+                Team Leader
+              </label>
+              <input
+                type="text"
+                list="hr-team-leader-options"
+                placeholder="e.g. Arshith"
+                value={teamForm.leader}
+                onChange={(e) => setTeamForm({ ...teamForm, leader: e.target.value })}
+                style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.875rem', boxSizing: 'border-box' }}
+              />
+              <datalist id="hr-team-leader-options">
+                {approvedLeaders.map((tl) => {
+                  const name = tl.name || tl.full_name;
+                  return name ? <option key={tl.id || name} value={name} /> : null;
+                })}
+              </datalist>
+            </div>
           </div>
 
-          <div style={{ marginBottom: '14px' }}>
-            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#334155', marginBottom: '4px' }}>
-              Team Leader
-            </label>
+          {/* Add Employees / Members Multi-Select List */}
+          <div style={{ marginBottom: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+              <label style={{ fontSize: '0.8rem', fontWeight: '700', color: '#334155' }}>
+                Add Team Members / Employees
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '0.74rem', color: '#0f766e', fontWeight: '700' }}>
+                  {teamForm.memberKeys.length} of {allTeamEmployees.length} selected
+                </span>
+                {allTeamEmployees.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allSelected = teamForm.memberKeys.length === allTeamEmployees.length;
+                      setTeamForm((prev) => ({
+                        ...prev,
+                        memberKeys: allSelected ? [] : allTeamEmployees.map((emp) => emp._memberKey),
+                      }));
+                    }}
+                    style={{
+                      border: 'none',
+                      background: 'transparent',
+                      color: '#0b3d2b',
+                      fontSize: '0.74rem',
+                      fontWeight: '700',
+                      cursor: 'pointer',
+                      textDecoration: 'underline',
+                      padding: 0,
+                    }}
+                  >
+                    {teamForm.memberKeys.length === allTeamEmployees.length ? 'Clear All' : 'Select All'}
+                  </button>
+                )}
+              </div>
+            </div>
+
             <input
               type="text"
-              placeholder="e.g. Arshith"
-              value={teamForm.leader}
-              onChange={(e) => setTeamForm({ ...teamForm, leader: e.target.value })}
-              style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.875rem' }}
+              placeholder="Search employees by name, ID, or department..."
+              value={teamMemberSearch}
+              onChange={(e) => setTeamMemberSearch(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '7px 10px',
+                borderRadius: '8px',
+                border: '1px solid #cbd5e1',
+                fontSize: '0.8rem',
+                marginBottom: '8px',
+                boxSizing: 'border-box',
+              }}
             />
+
+            <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '6px', backgroundColor: '#f8fafc' }}>
+              {(() => {
+                const q = teamMemberSearch.trim().toLowerCase();
+                const visibleEmployees = q
+                  ? allTeamEmployees.filter((emp) =>
+                      emp._displayName.toLowerCase().includes(q) ||
+                      String(emp.employee_id || emp.employeeId || emp.id || '').toLowerCase().includes(q) ||
+                      String(emp.department || '').toLowerCase().includes(q) ||
+                      String(emp.designation || '').toLowerCase().includes(q)
+                    )
+                  : allTeamEmployees;
+
+                if (visibleEmployees.length === 0) {
+                  return (
+                    <div style={{ padding: '14px', textAlign: 'center', color: '#94a3b8', fontSize: '0.8rem' }}>
+                      {allTeamEmployees.length === 0 ? 'No employees found.' : 'No matching employees found.'}
+                    </div>
+                  );
+                }
+
+                return visibleEmployees.map((emp) => {
+                  const key = emp._memberKey;
+                  const isChecked = teamForm.memberKeys.includes(key);
+                  const empCode = emp.employee_id || emp.employeeId || emp.id || '';
+                  return (
+                    <div
+                      key={key}
+                      onClick={() => {
+                        setTeamForm((prev) => {
+                          const exists = prev.memberKeys.includes(key);
+                          return {
+                            ...prev,
+                            memberKeys: exists
+                              ? prev.memberKeys.filter((x) => x !== key)
+                              : [...prev.memberKeys, key],
+                          };
+                        });
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '7px 8px',
+                        borderRadius: '6px',
+                        backgroundColor: isChecked ? '#f0fdf4' : 'transparent',
+                        border: isChecked ? '1px solid #bbf7d0' : '1px solid transparent',
+                        cursor: 'pointer',
+                        marginBottom: '3px',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div
+                          style={{
+                            width: '18px',
+                            height: '18px',
+                            borderRadius: '4px',
+                            border: isChecked ? 'none' : '1px solid #cbd5e1',
+                            backgroundColor: isChecked ? '#0b3d2b' : '#fff',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: '#fff',
+                            flexShrink: 0,
+                          }}
+                        >
+                          {isChecked && <Check size={12} />}
+                        </div>
+                        <div>
+                          <span style={{ fontSize: '0.825rem', fontWeight: 600, color: '#1e293b' }}>
+                            {emp._displayName}
+                          </span>
+                          <span style={{ fontSize: '0.72rem', color: '#64748b', marginLeft: '6px' }}>
+                            ({emp.designation || 'Staff'} &bull; {emp.department || 'Operations'})
+                          </span>
+                        </div>
+                      </div>
+                      {empCode && (
+                        <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>
+                          {empCode}
+                        </span>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
             <button
               type="button"
-              onClick={() => setIsCreateTeamModalOpen(false)}
+              onClick={() => {
+                setIsCreateTeamModalOpen(false);
+                setTeamMemberSearch('');
+              }}
               style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: '#fff', fontSize: '0.85rem', cursor: 'pointer' }}
             >
               Cancel
             </button>
             <button
               type="submit"
-              style={{ padding: '8px 18px', borderRadius: '8px', border: 'none', backgroundColor: '#0b3d2b', color: '#fff', fontSize: '0.85rem', fontWeight: '700', cursor: 'pointer' }}
+              disabled={isCreatingTeam}
+              style={{
+                padding: '8px 18px',
+                borderRadius: '8px',
+                border: 'none',
+                backgroundColor: '#0b3d2b',
+                color: '#fff',
+                fontSize: '0.85rem',
+                fontWeight: '700',
+                cursor: isCreatingTeam ? 'not-allowed' : 'pointer',
+                opacity: isCreatingTeam ? 0.7 : 1,
+              }}
             >
-              Create Team
+              {isCreatingTeam ? 'Creating...' : 'Create Team'}
             </button>
           </div>
         </form>

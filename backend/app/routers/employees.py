@@ -35,7 +35,14 @@ def format_employee_response(emp: Any, db: Optional[Session] = None) -> dict:
         acct_no = emp.get("account_number") or emp.get("accountNumber") or emp.get("bank_account_no") or ""
         pan_no = emp.get("pan_number") or emp.get("panNumber") or emp.get("pan") or ""
         uan_no = emp.get("uan_number") or emp.get("uanNumber") or emp.get("uan") or emp.get("pf_number") or ""
-        photo = emp.get("profile_photo") or emp.get("profilePhoto") or emp.get("photo_url") or emp.get("avatar") or ""
+        photo = (
+            emp.get("photoUrl")
+            or emp.get("profile_photo")
+            or emp.get("profilePhoto")
+            or emp.get("photo_url")
+            or emp.get("avatar")
+            or ""
+        )
 
         return {
             "id": emp_id,
@@ -66,6 +73,9 @@ def format_employee_response(emp: Any, db: Optional[Session] = None) -> dict:
             "pf_number": uan_no,
             "profile_photo": photo,
             "profilePhoto": photo,
+            "photoUrl": photo,
+            "photo_url": photo,
+            "avatar": photo,
         }
 
     # SQLAlchemy model
@@ -112,6 +122,9 @@ def format_employee_response(emp: Any, db: Optional[Session] = None) -> dict:
         "pf_number": uan_no,
         "profile_photo": photo,
         "profilePhoto": photo,
+        "photoUrl": photo,
+        "photo_url": photo,
+        "avatar": photo,
     }
 
 

@@ -1,11 +1,33 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   RefreshCw, CheckCircle2, Clock, AlertCircle, Send, X, 
-  Calendar, User, Mail, Hash, Layers
+  Calendar, User, Lock, Check, ChevronRight, FileText, Eye,
+  Grid, List
 } from 'lucide-react';
 import { workUpdateService } from '../../services/workUpdateService';
+import WorkUpdatesDrilldown from '../../components/work-updates/WorkUpdatesDrilldown';
 
+/**
+ * EmployeeWorkUpdates Page
+ * Professional horizontal layouts for website & mobile:
+ * - Top Status Banner with next window opening countdown
+ * - Responsive horizontal card strips and 4-column side-by-side grid
+ * - Node indicators with green checkmarks for submitted and dotted circles for pending
+ * - Badges: "✓ Submitted", "Window closed", "Opens {time}", "Open Now"
+ * - Action buttons: "View ›" for submitted, unlocked "Submit" for open, "🔒 Submit" for locked
+ * - Tab switcher to view past Daily Work History & download PDF reports
+ */
 export default function EmployeeWorkUpdates() {
+  const navigate = useNavigate();
+
+  // Active view tab: 'today' | 'history'
+  const [activeTab, setActiveTab] = useState('today');
+
+  // Schedule view mode: 'horizontal_rows' | 'horizontal_grid'
+  const [scheduleViewMode, setScheduleViewMode] = useState('horizontal_rows');
+
+  // Schedules state
   const [schedulesData, setSchedulesData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -18,6 +40,10 @@ export default function EmployeeWorkUpdates() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState('');
 
+  // View submitted update modal state
+  const [viewingSchedule, setViewingSchedule] = useState(null);
+
+  // Fetch today's schedules
   const fetchTodaySchedules = useCallback(async (isSilent = false) => {
     try {
       if (!isSilent) setIsLoading(true);
@@ -37,27 +63,28 @@ export default function EmployeeWorkUpdates() {
 
   useEffect(() => {
     fetchTodaySchedules();
-    // Auto-refresh every 30 seconds to recalculate real-time time window availability
     const interval = setInterval(() => {
       fetchTodaySchedules(true);
     }, 30000);
     return () => clearInterval(interval);
   }, [fetchTodaySchedules]);
 
-  const handleOpenModal = (sch) => {
+  // Open submission modal
+  const handleOpenSubmitModal = (sch) => {
     if (!sch.is_open || sch.has_submitted) return;
     setActiveSchedule(sch);
     setUpdateText('');
     setModalError('');
   };
 
-  const handleCloseModal = () => {
-    if (isSubmitting) return;
+  const handleCloseSubmitModal = (force = false) => {
+    if (isSubmitting && force !== true) return;
     setActiveSchedule(null);
     setUpdateText('');
     setModalError('');
   };
 
+  // Submit work update
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!updateText.trim()) {
@@ -81,14 +108,19 @@ export default function EmployeeWorkUpdates() {
         date: schedulesData?.date,
       });
 
-      handleCloseModal();
-      setSuccessMessage(`Work update for ${activeSchedule.name} submitted successfully!`);
-      setTimeout(() => setSuccessMessage(''), 4000);
+      const submittedName = activeSchedule.name;
+      handleCloseSubmitModal(true);
+      setSuccessMessage(`Work update for ${submittedName} submitted successfully!`);
+      setTimeout(() => setSuccessMessage(''), 4500);
 
-      // Refresh today schedules to reflect the submitted status
+      // Refresh today schedules
       await fetchTodaySchedules(true);
     } catch (err) {
-      setModalError(err.message || 'Failed to submit work update');
+      const msg = err.message || 'Failed to submit work update';
+      setModalError(msg);
+      if (msg.toLowerCase().includes('already been submitted')) {
+        fetchTodaySchedules(true);
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -96,71 +128,129 @@ export default function EmployeeWorkUpdates() {
 
   const employee = schedulesData?.employee || {};
   const schedules = schedulesData?.schedules || [];
+  const nextWindowText = schedulesData?.nextWindowText || 'Next window opens soon';
+  const totalUpdates = schedulesData?.totalUpdatesToday || schedules.length || 4;
 
   return (
-    <div style={{ maxWidth: '820px', margin: '0 auto', padding: '16px 20px 48px' }}>
-      {/* Top Header matching Mobile Screenshot 3 */}
-      <div 
-        style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'space-between',
-          padding: '12px 0 20px',
-          borderBottom: '1px solid #ede9fe',
-          marginBottom: '24px'
+    <div
+      style={{
+        maxWidth: '1160px',
+        margin: '0 auto',
+        padding: '0 20px 48px',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      }}
+    >
+      {/* Top Banner / Navigation Bar */}
+      <div
+        style={{
+          background: 'linear-gradient(135deg, #00594C 0%, #00796B 50%, #004D40 100%)',
+          color: '#ffffff',
+          margin: '-16px -20px 24px',
+          padding: '22px 28px 26px',
+          borderBottomLeftRadius: '24px',
+          borderBottomRightRadius: '24px',
+          boxShadow: '0 6px 20px rgba(0, 77, 64, 0.22)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+        {/* Top Controls Row */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+          <button
+            type="button"
+            onClick={() => navigate('/employee/dashboard')}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              backgroundColor: 'rgba(255, 255, 255, 0.18)',
+              border: 'none',
+              color: '#ffffff',
+              borderRadius: '8px',
+              padding: '7px 16px',
+              fontSize: '0.85rem',
+              fontWeight: '700',
+              cursor: 'pointer',
+              transition: 'background-color 0.2s',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.28)')}
+            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.18)')}
+          >
+            ‹ Back
+          </button>
+
+          {/* Tab Switcher: Today's Schedule vs My History */}
+          <div style={{ display: 'flex', backgroundColor: 'rgba(0, 0, 0, 0.22)', borderRadius: '10px', padding: '3px', gap: '3px' }}>
+            <button
+              type="button"
+              onClick={() => setActiveTab('today')}
+              style={{
+                padding: '6px 16px',
+                borderRadius: '8px',
+                border: 'none',
+                fontSize: '0.825rem',
+                fontWeight: '700',
+                backgroundColor: activeTab === 'today' ? '#ffffff' : 'transparent',
+                color: activeTab === 'today' ? '#004d40' : '#ffffff',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+              }}
+            >
+              Today's Schedule
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('history')}
+              style={{
+                padding: '6px 16px',
+                borderRadius: '8px',
+                border: 'none',
+                fontSize: '0.825rem',
+                fontWeight: '700',
+                backgroundColor: activeTab === 'history' ? '#ffffff' : 'transparent',
+                color: activeTab === 'history' ? '#004d40' : '#ffffff',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+              }}
+            >
+              My History & Reports
+            </button>
+          </div>
+
           <button
             type="button"
             onClick={() => fetchTodaySchedules(true)}
-            title="Refresh schedules"
+            title="Refresh"
             disabled={isRefreshing}
             style={{
-              background: '#f5f3ff',
-              border: '1px solid #ddd6fe',
-              color: '#7651E8',
+              background: 'rgba(255, 255, 255, 0.16)',
+              border: 'none',
+              color: '#ffffff',
               borderRadius: '50%',
-              width: '42px',
-              height: '42px',
+              width: '34px',
+              height: '34px',
+              cursor: isRefreshing ? 'wait' : 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              cursor: isRefreshing ? 'wait' : 'pointer',
-              transition: 'all 0.2s',
             }}
           >
-            <RefreshCw size={20} className={isRefreshing ? 'animate-spin' : ''} />
+            <RefreshCw size={16} className={isRefreshing ? 'animate-spin' : ''} />
           </button>
-          <div>
-            <h1 style={{ fontSize: '1.45rem', fontWeight: '800', color: '#251E32', margin: 0, lineHeight: 1.2 }}>
-              Work Update
-            </h1>
-            <p style={{ fontSize: '0.85rem', color: '#777180', margin: '2px 0 0', fontWeight: '500' }}>
-              Today's work schedules • {schedulesData?.date || 'Today'} {schedulesData?.currentTime ? `(${schedulesData.currentTime})` : ''}
-            </p>
-          </div>
         </div>
 
-        {employee?.name && (
-          <div style={{ textAlign: 'right', display: 'none', sm: 'block' }}>
-            <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#251E32' }}>{employee.name}</span>
-            <span style={{ fontSize: '0.75rem', color: '#777180', display: 'block' }}>{employee.employee_id}</span>
-          </div>
-        )}
+        {/* Live Window Indicator */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+          <Clock size={18} color="#a7f3d0" />
+          <span style={{ fontSize: '1.05rem', fontWeight: '800', color: '#f0fdf4', letterSpacing: '-0.2px' }}>
+            {nextWindowText}
+          </span>
+        </div>
+
+        <div style={{ fontSize: '0.85rem', color: 'rgba(255, 255, 255, 0.85)' }}>
+          {employee?.name ? `Logged in as ${employee.name} (${employee.email || ''})` : 'Arshith Connect Daily Work Portal'}
+        </div>
       </div>
 
-      {/* Title & Description matching Screenshots 3 and 4 */}
-      <div style={{ marginBottom: '24px' }}>
-        <h2 style={{ fontSize: '1.65rem', fontWeight: '800', color: '#251E32', margin: 0, letterSpacing: '-0.02em' }}>
-          Daily Work Updates
-        </h2>
-        <p style={{ fontSize: '0.95rem', color: '#777180', margin: '6px 0 0', lineHeight: 1.5 }}>
-          Submit your update during the available time window for each schedule.
-        </p>
-      </div>
-
-      {/* Success notification */}
+      {/* Success Notification */}
       {successMessage && (
         <div
           style={{
@@ -168,13 +258,13 @@ export default function EmployeeWorkUpdates() {
             border: '1px solid #a7f3d0',
             color: '#065f46',
             borderRadius: '12px',
-            padding: '12px 16px',
-            fontSize: '0.9rem',
+            padding: '12px 18px',
+            fontSize: '0.875rem',
             fontWeight: '600',
-            marginBottom: '20px',
+            marginBottom: '18px',
             display: 'flex',
             alignItems: 'center',
-            gap: '10px',
+            gap: '8px',
           }}
         >
           <CheckCircle2 size={18} />
@@ -182,7 +272,7 @@ export default function EmployeeWorkUpdates() {
         </div>
       )}
 
-      {/* Error notification */}
+      {/* Error Notification */}
       {errorMessage && (
         <div
           style={{
@@ -190,13 +280,13 @@ export default function EmployeeWorkUpdates() {
             border: '1px solid #fecaca',
             color: '#b91c1c',
             borderRadius: '12px',
-            padding: '12px 16px',
-            fontSize: '0.9rem',
+            padding: '12px 18px',
+            fontSize: '0.875rem',
             fontWeight: '600',
-            marginBottom: '20px',
+            marginBottom: '18px',
             display: 'flex',
             alignItems: 'center',
-            gap: '10px',
+            gap: '8px',
           }}
         >
           <AlertCircle size={18} />
@@ -204,276 +294,514 @@ export default function EmployeeWorkUpdates() {
         </div>
       )}
 
-      {/* Loading Skeleton */}
-      {isLoading ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {[1, 2, 3, 4].map((i) => (
-            <div 
-              key={i} 
-              style={{ 
-                height: '170px', 
-                backgroundColor: '#ffffff', 
-                borderRadius: '18px', 
-                border: '1px solid #ede9fe',
-                padding: '22px',
-                animation: 'pulse 1.5s infinite',
-                boxShadow: '0 2px 10px rgba(0,0,0,0.03)'
-              }} 
-            />
-          ))}
-        </div>
-      ) : (
-        /* Work Schedule Cards (matching Screenshots 3 & 4) */
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {schedules.map((sch) => {
-            const isSubmitted = sch.has_submitted;
-            const isOpen = sch.is_open;
-            
-            // Determine button colors and styling based on state
-            let buttonBg = '#7651E8';
-            let buttonCursor = 'default';
-            let buttonOpacity = 1;
+      {/* ========================================================================= */}
+      {/* TAB 1: TODAY'S SCHEDULE (Horizontal Widescreen Layout)                    */}
+      {/* ========================================================================= */}
+      {activeTab === 'today' && (
+        <div className="animate-fade-in">
+          {/* Header Row: Today's schedule | 4 updates today & View Switcher */}
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '14px',
+              marginBottom: '20px',
+              padding: '0 4px',
+            }}
+          >
+            <div>
+              <h1 style={{ fontSize: '1.45rem', fontWeight: '800', color: '#0f172a', margin: '0 0 2px', letterSpacing: '-0.3px' }}>
+                Today's schedule
+              </h1>
+              <span style={{ fontSize: '0.875rem', color: '#64748b', fontWeight: '500' }}>
+                {totalUpdates} updates today &bull; Date: {schedulesData?.date || 'Today'}
+              </span>
+            </div>
 
-            if (isSubmitted) {
-              buttonBg = '#7651E8';
-              buttonOpacity = 0.88;
-            } else if (isOpen) {
-              buttonBg = '#7651E8';
-              buttonCursor = 'pointer';
-            } else {
-              buttonBg = '#7651E8';
-              buttonOpacity = 0.82;
-            }
-
-            return (
-              <div
-                key={sch.schedule_id || sch.section}
+            {/* Row vs Grid Switcher */}
+            <div style={{ display: 'flex', backgroundColor: '#e2e8f0', borderRadius: '8px', padding: '2px' }}>
+              <button
+                type="button"
+                onClick={() => setScheduleViewMode('horizontal_rows')}
+                title="Horizontal Rows"
                 style={{
-                  backgroundColor: '#ffffff',
-                  border: isOpen ? '1.5px solid #c4b5fd' : '1px solid #ede9fe',
-                  borderRadius: '18px',
-                  padding: '22px 24px',
-                  boxShadow: isOpen 
-                    ? '0 6px 20px rgba(118, 81, 232, 0.12)' 
-                    : '0 2px 10px rgba(0, 0, 0, 0.03)',
-                  transition: 'all 0.2s ease',
-                  position: 'relative',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: '700',
+                  backgroundColor: scheduleViewMode === 'horizontal_rows' ? '#ffffff' : 'transparent',
+                  color: scheduleViewMode === 'horizontal_rows' ? '#004d40' : '#64748b',
+                  cursor: 'pointer',
                 }}
               >
-                {/* Schedule Tag / Number: e.g. WORK UPDATE 01 */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span
-                    style={{
-                      color: '#7651E8',
-                      fontSize: '0.78rem',
-                      fontWeight: '800',
-                      letterSpacing: '0.08em',
-                      textTransform: 'uppercase',
-                    }}
-                  >
-                    {sch.name ? sch.name.toUpperCase() : `WORK UPDATE 0${sch.section}`}
-                  </span>
-                  {isOpen && (
-                    <span 
-                      style={{ 
-                        fontSize: '0.75rem', 
-                        fontWeight: '700', 
-                        color: '#15803d', 
-                        backgroundColor: '#dcfce7',
-                        padding: '3px 9px',
-                        borderRadius: '20px'
-                      }}
-                    >
-                      ● Window Open
-                    </span>
-                  )}
-                </div>
+                <List size={14} />
+                <span>Rows</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setScheduleViewMode('horizontal_grid')}
+                title="4-Column Horizontal Grid"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: '700',
+                  backgroundColor: scheduleViewMode === 'horizontal_grid' ? '#ffffff' : 'transparent',
+                  color: scheduleViewMode === 'horizontal_grid' ? '#004d40' : '#64748b',
+                  cursor: 'pointer',
+                }}
+              >
+                <Grid size={14} />
+                <span>Grid</span>
+              </button>
+            </div>
+          </div>
 
-                {/* Work Time: e.g. 9:30 AM - 11:00 AM */}
-                <div
-                  style={{
-                    color: '#251E32',
-                    fontSize: '1.35rem',
-                    fontWeight: '800',
-                    lineHeight: 1.3,
-                    letterSpacing: '-0.01em',
-                  }}
-                >
-                  {sch.work_schedule_str}
-                </div>
-
-                {/* Submission Window: e.g. Update window: 10:30 AM - 11:00 AM */}
-                <div
-                  style={{
-                    color: '#777180',
-                    fontSize: '0.88rem',
-                    fontWeight: '500',
-                    marginTop: '5px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px'
-                  }}
-                >
-                  <span>Update window: {sch.submission_window_str}</span>
-                </div>
-
-                {/* Status line matching Screenshot 3 & 4 */}
-                <div
-                  style={{
-                    marginTop: '14px',
-                    fontSize: '0.9rem',
-                    fontWeight: '700',
-                    color: isSubmitted 
-                      ? '#288246' // Green for already submitted
-                      : isOpen 
-                        ? '#288246' // Green for update available now
-                        : '#4b5563', // Dark gray for closed/upcoming
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px'
-                  }}
-                >
-                  {isSubmitted && <CheckCircle2 size={16} color="#288246" />}
-                  <span>{sch.status_text}</span>
-                </div>
-
-                {/* Action Button matching Purple buttons in Screenshots 3 & 4 */}
-                <button
-                  type="button"
-                  disabled={!isOpen || isSubmitted}
-                  onClick={() => handleOpenModal(sch)}
-                  style={{
-                    width: '100%',
-                    height: '50px',
-                    marginTop: '16px',
-                    backgroundColor: buttonBg,
-                    color: '#ffffff',
-                    border: 'none',
-                    borderRadius: '12px',
-                    fontSize: '0.9rem',
-                    fontWeight: '800',
-                    letterSpacing: '0.04em',
-                    textTransform: 'uppercase',
-                    cursor: buttonCursor,
-                    opacity: buttonOpacity,
-                    boxShadow: isOpen ? '0 4px 14px rgba(118, 81, 232, 0.28)' : 'none',
-                    transition: 'all 0.2s ease',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '8px',
-                  }}
-                  onMouseOver={(e) => {
-                    if (isOpen && !isSubmitted) {
-                      e.currentTarget.style.backgroundColor = '#643ddb';
-                    }
-                  }}
-                  onMouseOut={(e) => {
-                    if (isOpen && !isSubmitted) {
-                      e.currentTarget.style.backgroundColor = buttonBg;
-                    }
-                  }}
-                >
-                  {isOpen && !isSubmitted && <Send size={15} />}
-                  <span>{sch.button_text}</span>
-                </button>
+          {/* Loading state */}
+          {isLoading && (
+            <div style={{ textAlign: 'center', padding: '64px 0', color: '#00796B' }}>
+              <RefreshCw size={28} className="animate-spin" style={{ margin: '0 auto 10px' }} />
+              <div style={{ fontSize: '0.9rem', fontWeight: '600', color: '#64748b' }}>
+                Loading today's schedules...
               </div>
-            );
-          })}
+            </div>
+          )}
+
+          {/* Schedule Cards Layout */}
+          {!isLoading && scheduleViewMode === 'horizontal_rows' ? (
+            /* Style A: Professional Horizontal Strip Cards */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {schedules.map((sch, index) => {
+                const isSubmitted = sch.has_submitted;
+                const isOpen = sch.is_open;
+
+                return (
+                  <div
+                    key={sch.id || index}
+                    style={{
+                      backgroundColor: '#ffffff',
+                      borderRadius: '16px',
+                      border: '1.5px dashed #cbd5e1',
+                      padding: '16px 22px',
+                      boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '20px',
+                      flexWrap: 'wrap',
+                      transition: 'all 0.2s ease',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#00796B')}
+                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#cbd5e1')}
+                  >
+                    {/* Left: Indicator node + Update # + Name */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: '1 1 260px', minWidth: 'min(100%, 220px)' }}>
+                      <div
+                        style={{
+                          width: '34px',
+                          height: '34px',
+                          borderRadius: '50%',
+                          backgroundColor: isSubmitted ? '#00594C' : '#ffffff',
+                          border: isSubmitted ? 'none' : '2px solid #00796B',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0,
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+                        }}
+                      >
+                        {isSubmitted ? (
+                          <Check size={16} color="#ffffff" strokeWidth={3} />
+                        ) : (
+                          <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#00796B' }} />
+                        )}
+                      </div>
+                      <div>
+                        <span style={{ fontSize: '0.725rem', fontWeight: '800', color: '#64748b', letterSpacing: '0.5px' }}>
+                          {sch.section_label || `UPDATE 0${sch.section || index + 1}`}
+                        </span>
+                        <div style={{ fontSize: '1.08rem', fontWeight: '800', color: '#0f172a', lineHeight: 1.25 }}>
+                          {sch.name}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Middle: Working Hours & Submission Window */}
+                    <div style={{ flex: '1 1 280px', minWidth: 'min(100%, 220px)', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <div style={{ fontSize: '0.875rem', fontWeight: '700', color: '#334155' }}>
+                        {sch.work_schedule_str || `${sch.work_start_display} - ${sch.work_end_display}`}
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                        Window: {sch.submission_window_str || `${sch.window_start_display} - ${sch.window_end_display}`}
+                      </div>
+                    </div>
+
+                    {/* Right: Badge + Action Button */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
+                      {/* Badge Pill */}
+                      {isSubmitted && (
+                        <span style={{ backgroundColor: '#dcfce7', color: '#15803d', borderRadius: '14px', padding: '5px 14px', fontSize: '0.75rem', fontWeight: '700' }}>
+                          ✓ Submitted
+                        </span>
+                      )}
+                      {!isSubmitted && sch.badge_variant === 'closed' && (
+                        <span style={{ backgroundColor: '#f1f5f9', color: '#64748b', borderRadius: '14px', padding: '5px 14px', fontSize: '0.75rem', fontWeight: '700' }}>
+                          Window closed
+                        </span>
+                      )}
+                      {!isSubmitted && sch.badge_variant === 'upcoming' && (
+                        <span style={{ backgroundColor: '#fef3c7', color: '#b45309', borderRadius: '14px', padding: '5px 14px', fontSize: '0.75rem', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          <Clock size={12} />
+                          {sch.badge_text || 'Upcoming'}
+                        </span>
+                      )}
+                      {!isSubmitted && sch.badge_variant === 'open' && (
+                        <span style={{ backgroundColor: '#d1fae5', color: '#065f46', borderRadius: '14px', padding: '5px 14px', fontSize: '0.75rem', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#10b981' }} />
+                          Open Now
+                        </span>
+                      )}
+
+                      {/* Action Button */}
+                      {isSubmitted ? (
+                        <button
+                          type="button"
+                          onClick={() => setViewingSchedule(sch)}
+                          style={{
+                            background: '#f0fdf9',
+                            border: '1px solid rgba(0, 121, 107, 0.25)',
+                            borderRadius: '8px',
+                            color: '#004d40',
+                            fontSize: '0.85rem',
+                            fontWeight: '700',
+                            cursor: 'pointer',
+                            padding: '8px 16px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            transition: 'all 0.2s',
+                          }}
+                        >
+                          <span>View</span>
+                          <ChevronRight size={15} />
+                        </button>
+                      ) : isOpen ? (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenSubmitModal(sch)}
+                          style={{
+                            backgroundColor: '#00796B',
+                            color: '#ffffff',
+                            border: 'none',
+                            borderRadius: '8px',
+                            padding: '9px 20px',
+                            fontSize: '0.85rem',
+                            fontWeight: '700',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            boxShadow: '0 2px 6px rgba(0, 121, 107, 0.25)',
+                            transition: 'all 0.2s',
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#00594C')}
+                          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#00796B')}
+                        >
+                          Submit
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled
+                          style={{
+                            backgroundColor: '#00796B',
+                            color: '#ffffff',
+                            opacity: 0.85,
+                            border: 'none',
+                            borderRadius: '8px',
+                            padding: '9px 18px',
+                            fontSize: '0.85rem',
+                            fontWeight: '700',
+                            cursor: 'not-allowed',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                          }}
+                        >
+                          <Lock size={13} />
+                          Submit
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : !isLoading ? (
+            /* Style B: Horizontal 4-Column Grid */
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+                gap: '16px',
+              }}
+            >
+              {schedules.map((sch, index) => {
+                const isSubmitted = sch.has_submitted;
+                const isOpen = sch.is_open;
+
+                return (
+                  <div
+                    key={sch.id || index}
+                    style={{
+                      backgroundColor: '#ffffff',
+                      borderRadius: '16px',
+                      border: '1.5px dashed #cbd5e1',
+                      padding: '18px 20px',
+                      boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'space-between',
+                      transition: 'all 0.2s ease',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#00796B')}
+                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#cbd5e1')}
+                  >
+                    <div>
+                      {/* Top Row: UPDATE 01 & Badge */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <span style={{ fontSize: '0.725rem', fontWeight: '800', color: '#64748b' }}>
+                          {sch.section_label || `UPDATE 0${sch.section || index + 1}`}
+                        </span>
+
+                        {isSubmitted && (
+                          <span style={{ backgroundColor: '#dcfce7', color: '#15803d', borderRadius: '12px', padding: '3px 10px', fontSize: '0.725rem', fontWeight: '700' }}>
+                            ✓ Submitted
+                          </span>
+                        )}
+                        {!isSubmitted && sch.badge_variant === 'closed' && (
+                          <span style={{ backgroundColor: '#f1f5f9', color: '#64748b', borderRadius: '12px', padding: '3px 10px', fontSize: '0.725rem', fontWeight: '700' }}>
+                            Window closed
+                          </span>
+                        )}
+                        {!isSubmitted && sch.badge_variant === 'upcoming' && (
+                          <span style={{ backgroundColor: '#fef3c7', color: '#b45309', borderRadius: '12px', padding: '3px 10px', fontSize: '0.725rem', fontWeight: '700' }}>
+                            {sch.badge_text || 'Upcoming'}
+                          </span>
+                        )}
+                        {!isSubmitted && sch.badge_variant === 'open' && (
+                          <span style={{ backgroundColor: '#d1fae5', color: '#065f46', borderRadius: '12px', padding: '3px 10px', fontSize: '0.725rem', fontWeight: '700' }}>
+                            Open Now
+                          </span>
+                        )}
+                      </div>
+
+                      <div style={{ fontSize: '1.05rem', fontWeight: '800', color: '#0f172a', marginBottom: '4px' }}>
+                        {sch.name}
+                      </div>
+
+                      <div style={{ fontSize: '0.825rem', color: '#475569', marginBottom: '2px', fontWeight: '600' }}>
+                        {sch.work_schedule_str}
+                      </div>
+                      <div style={{ fontSize: '0.78rem', color: '#64748b', marginBottom: '16px' }}>
+                        Window: {sch.submission_window_str}
+                      </div>
+                    </div>
+
+                    {/* Bottom Action */}
+                    <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '12px' }}>
+                      {isSubmitted ? (
+                        <button
+                          type="button"
+                          onClick={() => setViewingSchedule(sch)}
+                          style={{
+                            width: '100%',
+                            background: '#f0fdf9',
+                            border: '1px solid rgba(0, 121, 107, 0.25)',
+                            borderRadius: '8px',
+                            color: '#004d40',
+                            fontSize: '0.85rem',
+                            fontWeight: '700',
+                            cursor: 'pointer',
+                            padding: '8px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '4px',
+                          }}
+                        >
+                          <span>View Update</span>
+                          <ChevronRight size={15} />
+                        </button>
+                      ) : isOpen ? (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenSubmitModal(sch)}
+                          style={{
+                            width: '100%',
+                            backgroundColor: '#00796B',
+                            color: '#ffffff',
+                            border: 'none',
+                            borderRadius: '8px',
+                            padding: '9px',
+                            fontSize: '0.85rem',
+                            fontWeight: '700',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Submit
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled
+                          style={{
+                            width: '100%',
+                            backgroundColor: '#00796B',
+                            color: '#ffffff',
+                            opacity: 0.85,
+                            border: 'none',
+                            borderRadius: '8px',
+                            padding: '9px',
+                            fontSize: '0.85rem',
+                            fontWeight: '700',
+                            cursor: 'not-allowed',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '6px',
+                          }}
+                        >
+                          <Lock size={13} />
+                          Submit
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {/* Bottom helper text */}
+          <div
+            style={{
+              textAlign: 'center',
+              color: '#94a3b8',
+              fontSize: '0.825rem',
+              marginTop: '32px',
+              padding: '0 12px',
+            }}
+          >
+            You can submit each update only during its window
+          </div>
         </div>
       )}
 
-      {/* SUBMISSION MODAL (Section 6 of requirements) */}
+      {/* ========================================================================= */}
+      {/* TAB 2: WORK UPDATES HISTORY & REPORT DOWNLOAD                            */}
+      {/* ========================================================================= */}
+      {activeTab === 'history' && (
+        <div className="animate-fade-in" style={{ margin: '0 -20px' }}>
+          <WorkUpdatesDrilldown
+            initialEmployee={{
+              uid: employee?.uid || employee?.id || 'me',
+              name: employee?.name || 'My Work Updates',
+              email: employee?.email || '',
+            }}
+            onExit={() => setActiveTab('today')}
+          />
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 1: SUBMIT WORK UPDATE                                              */}
+      {/* ========================================================================= */}
       {activeSchedule && (
         <div
           style={{
             position: 'fixed',
             inset: 0,
-            backgroundColor: 'rgba(15, 23, 42, 0.65)',
-            backdropFilter: 'blur(4px)',
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             zIndex: 1000,
             padding: '16px',
+            backdropFilter: 'blur(3px)',
           }}
-          onClick={handleCloseModal}
+          onClick={handleCloseSubmitModal}
         >
           <div
             style={{
               backgroundColor: '#ffffff',
               borderRadius: '20px',
-              maxWidth: '560px',
+              maxWidth: '480px',
               width: '100%',
-              padding: '28px',
-              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-              position: 'relative',
-              animation: 'fadeIn 0.2s ease-out',
+              padding: '24px',
+              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.2)',
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Modal Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <div>
-                <span style={{ color: '#7651E8', fontSize: '0.78rem', fontWeight: '800', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                  Section {activeSchedule.section}
+                <span
+                  style={{
+                    fontSize: '0.75rem',
+                    fontWeight: '800',
+                    color: '#00796B',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                  }}
+                >
+                  Section {activeSchedule.section} &bull; {activeSchedule.submission_window_str}
                 </span>
-                <h3 style={{ fontSize: '1.35rem', fontWeight: '800', color: '#251E32', margin: '2px 0 0' }}>
+                <h3 style={{ fontSize: '1.25rem', fontWeight: '800', color: '#0f172a', margin: '2px 0 0' }}>
                   {activeSchedule.name}
                 </h3>
               </div>
               <button
                 type="button"
-                onClick={handleCloseModal}
-                disabled={isSubmitting}
+                onClick={handleCloseSubmitModal}
                 style={{
-                  background: '#f3f4f6',
+                  background: '#f1f5f9',
                   border: 'none',
                   borderRadius: '50%',
-                  width: '36px',
-                  height: '36px',
+                  width: '32px',
+                  height: '32px',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  color: '#6b7280',
                   cursor: 'pointer',
+                  color: '#64748b',
                 }}
               >
                 <X size={18} />
               </button>
             </div>
 
-            {/* Schedule Info Banner */}
-            <div
-              style={{
-                backgroundColor: '#f5f3ff',
-                border: '1px solid #ddd6fe',
-                borderRadius: '12px',
-                padding: '12px 16px',
-                fontSize: '0.85rem',
-                color: '#4c1d95',
-                marginBottom: '18px',
-                lineHeight: 1.5,
-              }}
-            >
-              <div><strong>Work schedule:</strong> {activeSchedule.work_schedule_str}</div>
-              <div><strong>Update window:</strong> {activeSchedule.submission_window_str}</div>
-            </div>
-
             {modalError && (
               <div
                 style={{
-                  backgroundColor: '#fef2f2',
-                  border: '1px solid #fecaca',
-                  color: '#b91c1c',
-                  borderRadius: '10px',
+                  backgroundColor: '#fee2e2',
+                  color: '#991b1b',
                   padding: '10px 14px',
+                  borderRadius: '8px',
                   fontSize: '0.85rem',
-                  fontWeight: '600',
-                  marginBottom: '16px',
+                  marginBottom: '14px',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '8px',
+                  gap: '6px',
                 }}
               >
                 <AlertCircle size={16} />
@@ -482,164 +810,204 @@ export default function EmployeeWorkUpdates() {
             )}
 
             <form onSubmit={handleSubmit}>
-              {/* Read-only Employee & Context Fields */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', marginBottom: '14px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#6b7280', marginBottom: '4px' }}>
-                    Employee Name
-                  </label>
-                  <input
-                    type="text"
-                    value={employee.name || ''}
-                    readOnly
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      backgroundColor: '#f9fafb',
-                      border: '1px solid #e5e7eb',
-                      borderRadius: '8px',
-                      fontSize: '0.85rem',
-                      fontWeight: '600',
-                      color: '#374151',
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#6b7280', marginBottom: '4px' }}>
-                    Employee ID
-                  </label>
-                  <input
-                    type="text"
-                    value={employee.employee_id || ''}
-                    readOnly
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      backgroundColor: '#f9fafb',
-                      border: '1px solid #e5e7eb',
-                      borderRadius: '8px',
-                      fontSize: '0.85rem',
-                      fontWeight: '600',
-                      color: '#374151',
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#6b7280', marginBottom: '4px' }}>
-                    Work Date
-                  </label>
-                  <input
-                    type="text"
-                    value={schedulesData?.date || ''}
-                    readOnly
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      backgroundColor: '#f9fafb',
-                      border: '1px solid #e5e7eb',
-                      borderRadius: '8px',
-                      fontSize: '0.85rem',
-                      fontWeight: '600',
-                      color: '#374151',
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#6b7280', marginBottom: '4px' }}>
-                    Section
-                  </label>
-                  <input
-                    type="text"
-                    value={`Section: ${activeSchedule.section}`}
-                    readOnly
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      backgroundColor: '#f9fafb',
-                      border: '1px solid #e5e7eb',
-                      borderRadius: '8px',
-                      fontSize: '0.85rem',
-                      fontWeight: '700',
-                      color: '#087F5B',
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* Work Update Multiline Textarea */}
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '800', color: '#251E32', marginBottom: '6px' }}>
-                  Work Update <span style={{ color: '#dc2626' }}>*</span>
+              <div style={{ marginBottom: '16px' }}>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: '0.85rem',
+                    fontWeight: '700',
+                    color: '#334155',
+                    marginBottom: '6px',
+                  }}
+                >
+                  Work Update Summary *
                 </label>
                 <textarea
+                  rows={4}
+                  required
+                  placeholder="Describe the tasks, features or milestones completed during this period..."
                   value={updateText}
                   onChange={(e) => setUpdateText(e.target.value)}
-                  placeholder="Enter your work update (describe tasks completed, progress, etc.)..."
-                  rows={6}
-                  required
                   style={{
                     width: '100%',
-                    padding: '12px 14px',
-                    borderRadius: '12px',
-                    border: '1.5px solid #d1d5db',
+                    padding: '12px',
+                    borderRadius: '10px',
+                    border: '1.5px solid #cbd5e1',
                     fontSize: '0.9rem',
-                    fontFamily: 'inherit',
+                    color: '#1e293b',
                     outline: 'none',
                     resize: 'vertical',
                     boxSizing: 'border-box',
-                    transition: 'border-color 0.2s',
+                    fontFamily: 'inherit',
                   }}
-                  onFocus={(e) => e.target.style.borderColor = '#7651E8'}
-                  onBlur={(e) => e.target.style.borderColor = '#d1d5db'}
                 />
               </div>
 
-              {/* Actions */}
-              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
                 <button
                   type="button"
-                  onClick={handleCloseModal}
+                  onClick={handleCloseSubmitModal}
                   disabled={isSubmitting}
                   style={{
-                    padding: '11px 22px',
-                    borderRadius: '10px',
-                    border: '1px solid #d1d5db',
+                    padding: '9px 18px',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1',
                     backgroundColor: '#ffffff',
-                    color: '#374151',
-                    fontSize: '0.9rem',
+                    color: '#475569',
+                    fontSize: '0.85rem',
                     fontWeight: '700',
-                    cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                    cursor: 'pointer',
                   }}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting || !updateText.trim()}
+                  disabled={isSubmitting}
                   style={{
-                    padding: '11px 26px',
-                    borderRadius: '10px',
+                    padding: '9px 20px',
+                    borderRadius: '8px',
                     border: 'none',
-                    backgroundColor: '#7651E8',
+                    backgroundColor: '#00796B',
                     color: '#ffffff',
-                    fontSize: '0.9rem',
-                    fontWeight: '800',
-                    cursor: isSubmitting || !updateText.trim() ? 'not-allowed' : 'pointer',
-                    opacity: isSubmitting || !updateText.trim() ? 0.7 : 1,
-                    display: 'flex',
+                    fontSize: '0.85rem',
+                    fontWeight: '700',
+                    cursor: isSubmitting ? 'wait' : 'pointer',
+                    display: 'inline-flex',
                     alignItems: 'center',
-                    gap: '8px',
-                    boxShadow: '0 4px 12px rgba(118, 81, 232, 0.3)',
+                    gap: '6px',
                   }}
                 >
-                  {isSubmitting ? <RefreshCw size={16} className="animate-spin" /> : <Send size={16} />}
-                  <span>{isSubmitting ? 'Submitting...' : 'Submit'}</span>
+                  {isSubmitting ? (
+                    <>
+                      <RefreshCw size={14} className="animate-spin" />
+                      Submitting...
+                    </>
+                  ) : (
+                    <>
+                      <Send size={14} />
+                      Submit Update
+                    </>
+                  )}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 2: VIEW SUBMITTED UPDATE                                           */}
+      {/* ========================================================================= */}
+      {viewingSchedule && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '16px',
+            backdropFilter: 'blur(3px)',
+          }}
+          onClick={() => setViewingSchedule(null)}
+        >
+          <div
+            style={{
+              backgroundColor: '#ffffff',
+              borderRadius: '20px',
+              maxWidth: '480px',
+              width: '100%',
+              padding: '24px',
+              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.2)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <div>
+                <span
+                  style={{
+                    fontSize: '0.75rem',
+                    fontWeight: '800',
+                    color: '#15803d',
+                    backgroundColor: '#dcfce7',
+                    padding: '3px 10px',
+                    borderRadius: '12px',
+                  }}
+                >
+                  ✓ Submitted Today
+                </span>
+                <h3 style={{ fontSize: '1.25rem', fontWeight: '800', color: '#0f172a', margin: '6px 0 0' }}>
+                  {viewingSchedule.name}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingSchedule(null)}
+                style={{
+                  background: '#f1f5f9',
+                  border: 'none',
+                  borderRadius: '50%',
+                  width: '32px',
+                  height: '32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  color: '#64748b',
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '12px' }}>
+              <div>Work Schedule: {viewingSchedule.work_schedule_str}</div>
+              <div>Submission Window: {viewingSchedule.submission_window_str}</div>
+            </div>
+
+            <div
+              style={{
+                backgroundColor: '#f8fafc',
+                border: '1px solid #e2e8f0',
+                borderRadius: '12px',
+                padding: '14px 16px',
+                marginBottom: '16px',
+              }}
+            >
+              <div style={{ fontSize: '0.8rem', fontWeight: '800', color: '#004d40', marginBottom: '4px' }}>
+                Your Submitted Update:
+              </div>
+              <div style={{ fontSize: '0.875rem', color: '#334155', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>
+                {viewingSchedule.submission_details?.update ||
+                  viewingSchedule.submission_details?.tasks_completed ||
+                  viewingSchedule.submission_details?.tasksCompleted ||
+                  'No update content recorded.'}
+              </div>
+              <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '10px' }}>
+                Submitted: {viewingSchedule.submission_details?.submittedTime || 'Today'}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setViewingSchedule(null)}
+              style={{
+                width: '100%',
+                padding: '10px',
+                borderRadius: '8px',
+                border: 'none',
+                backgroundColor: '#00796B',
+                color: '#ffffff',
+                fontWeight: '700',
+                fontSize: '0.85rem',
+                cursor: 'pointer',
+              }}
+            >
+              Close
+            </button>
           </div>
         </div>
       )}

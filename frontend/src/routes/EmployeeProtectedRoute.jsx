@@ -1,5 +1,6 @@
 import React from 'react';
 import { Navigate, Outlet } from 'react-router-dom';
+import { hasActiveAuthStorage } from '../utils/authSession';
 
 /**
  * EmployeeProtectedRoute - Route guard for employee portal
@@ -7,11 +8,7 @@ import { Navigate, Outlet } from 'react-router-dom';
  * Redirects unauthenticated users to /login.
  */
 export default function EmployeeProtectedRoute() {
-  const role = localStorage.getItem('arshith_role');
-  const user = localStorage.getItem('arshith_user');
-  const token = localStorage.getItem('arshith_auth_token');
-
-  if (!role || !user || !token || role !== 'employee') {
+  if (!hasActiveAuthStorage(['employee'])) {
     return <Navigate to="/login" replace />;
   }
 

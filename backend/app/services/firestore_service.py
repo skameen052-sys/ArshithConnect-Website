@@ -15,6 +15,10 @@ LOCAL_DB_FILE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
     "firestore_local_db.json"
 )
+LOCAL_DB_BACKUP_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "firestore_local_db.backup.json"
+)
 
 
 def _serialize_val(val: Any) -> Any:
@@ -27,32 +31,68 @@ def _serialize_dict(d: Dict[str, Any]) -> Dict[str, Any]:
     return {k: _serialize_val(v) for k, v in d.items()}
 
 
-def _load_local_db() -> Dict[str, List[Dict[str, Any]]]:
-    """Load local JSON store used when live Firebase credentials have not yet been provided."""
-    with _local_db_lock:
-        def _ensure_target_collections(d: dict):
-            if "admins" not in d:
-                d["admins"] = [u for u in d.get("users", []) if u.get("role") == "admin"]
-            if "attendance" not in d:
-                d["attendance"] = d.get("attendances", [])
-            if "notifications" not in d:
-                d["notifications"] = d.get("announcements", [])
-            if "officeSettings" not in d:
-                d["officeSettings"] = d.get("office_timings", [])
-            if "settings" not in d:
-                d["settings"] = []
-            if "chat_messages" not in d:
-                d["chat_messages"] = []
-            if "chat_channels" not in d:
-                d["chat_channels"] = []
-            return d
+def _ensure_target_collections(d: dict) -> dict:
+    if "admins" not in d:
+        d["admins"] = [u for u in d.get("users", []) if u.get("role") == "admin"]
+    if "attendance" not in d:
+        d["attendance"] = d.get("attendances", [])
+    if "notifications" not in d:
+        d["notifications"] = d.get("announcements", [])
+    if "officeSettings" not in d:
+        d["officeSettings"] = d.get("office_timings", [])
+    if "settings" not in d:
+        d["settings"] = []
+    if "chat_messages" not in d:
+        d["chat_messages"] = []
+    if "chat_channels" not in d:
+        d["chat_channels"] = []
+    for col in [
+        "team_leaders",
+        "projects",
+        "tasks",
+        "project_tasks",
+        "project_milestones",
+        "project_allocations",
+        "project_reports",
+        "project_audit_logs",
+        "assignments",
+        "work_updates",
+        "employee_daily_updates",
+        "registration_requests",
+        "employees",
+        "users",
+        "employee_notifications",
+        "work_schedules",
+    ]:
+        if col not in d:
+            d[col] = []
+    return d
 
+
+def _load_local_db() -> Dict[str, List[Dict[str, Any]]]:
+    """Load local JSON store with automatic backup recovery and collection resilience."""
+    with _local_db_lock:
         if os.path.exists(LOCAL_DB_FILE):
             try:
                 with open(LOCAL_DB_FILE, "r", encoding="utf-8") as f:
-                    return _ensure_target_collections(json.load(f))
+                    content = f.read().strip()
+                    if content:
+                        return _ensure_target_collections(json.loads(content))
             except Exception as e:
-                logger.warning(f"Error loading local db file: {e}")
+                logger.warning(f"Error loading local db file ({e}), attempting backup recovery...")
+
+        # Attempt recovery from backup
+        if os.path.exists(LOCAL_DB_BACKUP_FILE):
+            try:
+                with open(LOCAL_DB_BACKUP_FILE, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                    if content:
+                        recovered = _ensure_target_collections(json.loads(content))
+                        _save_local_db(recovered)
+                        logger.info("Successfully recovered local database from backup file.")
+                        return recovered
+            except Exception as e:
+                logger.warning(f"Backup file recovery failed: {e}")
 
         # Seed from postgres_backup_data.json if available
         seed_path = os.path.join(
@@ -63,13 +103,12 @@ def _load_local_db() -> Dict[str, List[Dict[str, Any]]]:
             try:
                 with open(seed_path, "r", encoding="utf-8") as f:
                     data = _ensure_target_collections(json.load(f))
-                    with open(LOCAL_DB_FILE, "w", encoding="utf-8") as out:
-                        json.dump(data, out, indent=2)
+                    _save_local_db(data)
                     return data
             except Exception as e:
                 logger.warning(f"Error seeding local db: {e}")
 
-        default_data = {
+        default_data = _ensure_target_collections({
             "admins": [],
             "employees": [],
             "attendance": [],
@@ -103,22 +142,36 @@ def _load_local_db() -> Dict[str, List[Dict[str, Any]]]:
             "registration_requests": [],
             "office_timings": [],
             "audit_logs": [],
-        }
-        try:
-            with open(LOCAL_DB_FILE, "w", encoding="utf-8") as out:
-                json.dump(default_data, out, indent=2)
-        except Exception:
-            pass
+            "team_leaders": [],
+            "projects": [],
+            "project_tasks": [],
+        })
+        _save_local_db(default_data)
         return default_data
 
 
 def _save_local_db(data: Dict[str, List[Dict[str, Any]]]) -> None:
+    """Safely persist database data with atomic writes and synchronized backup."""
     with _local_db_lock:
+        tmp_file = LOCAL_DB_FILE + ".tmp"
         try:
-            with open(LOCAL_DB_FILE, "w", encoding="utf-8") as f:
+            with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
+            os.replace(tmp_file, LOCAL_DB_FILE)
+
+            # Keep backup synchronized
+            try:
+                with open(LOCAL_DB_BACKUP_FILE, "w", encoding="utf-8") as bf:
+                    json.dump(data, bf, indent=2)
+            except Exception:
+                pass
         except Exception as e:
             logger.error(f"Error saving local db: {e}")
+            if os.path.exists(tmp_file):
+                try:
+                    os.remove(tmp_file)
+                except Exception:
+                    pass
 
 
 class FirestoreService:
@@ -176,8 +229,37 @@ class FirestoreService:
             "audit_logs": "audit_logs",
             "chat_message": "chat_messages",
             "chat_messages": "chat_messages",
+            "chat_conversation": "chat_conversations",
+            "chat_conversations": "chat_conversations",
+            "chatnew_message": "chatnew_messages",
+            "chatnew_messages": "chatnew_messages",
+            "chat_user": "chat_users",
+            "chat_users": "chat_users",
+            "chat_presence": "chat_presence",
+            "chat_notification": "chat_notifications",
+            "chat_notifications": "chat_notifications",
             "chat_channel": "chat_channels",
             "chat_channels": "chat_channels",
+            "project": "projects",
+            "projects": "projects",
+            "project_milestone": "project_milestones",
+            "project_milestones": "project_milestones",
+            "project_allocation": "project_allocations",
+            "project_allocations": "project_allocations",
+            "project_report": "project_reports",
+            "project_reports": "project_reports",
+            "project_audit_log": "project_audit_logs",
+            "project_audit_logs": "project_audit_logs",
+            "task": "project_tasks",
+            "tasks": "project_tasks",
+            "project_task": "project_tasks",
+            "project_tasks": "project_tasks",
+            "team_leader": "team_leaders",
+            "team_leaders": "team_leaders",
+            "employee_daily_update": "employee_daily_updates",
+            "employee_daily_updates": "employee_daily_updates",
+            "employee_notification": "employee_notifications",
+            "employee_notifications": "employee_notifications",
         }
         return mapping.get(entity.lower(), entity)
 
@@ -209,9 +291,21 @@ class FirestoreService:
         # Local fallback
         db = _load_local_db()
         results = []
-        for k in [group_id, f"cg_{group_id}"]:
+        seen = set()
+        keys_to_check = [f"cg_{group_id}", group_id]
+        if group_id in ["records", "requests"]:
+            keys_to_check.extend(["attendance", "attendances", "leaves"])
+        if group_id in ["dailyUpdates", "workUpdates"]:
+            keys_to_check.extend(["work_updates", "workUpdates", "cg_dailyUpdates"])
+        for k in keys_to_check:
             if k in db:
                 for item in db[k]:
+                    dedup_key = (
+                        item.get("_doc_path")
+                        or f"{item.get('employeeId') or item.get('employee_id')}_{item.get('date') or item.get('id')}"
+                    )
+                    if dedup_key in seen:
+                        continue
                     matches = True
                     if filters:
                         for f in filters:
@@ -220,8 +314,67 @@ class FirestoreService:
                                     matches = False
                                     break
                     if matches:
+                        seen.add(dedup_key)
                         results.append(item)
         return results
+
+    @classmethod
+    def get_subdocument(cls, collection: str, doc_id: Any, subcollection: str, subdoc_id: Any) -> Optional[Dict[str, Any]]:
+        """Retrieve single subcollection document, checking live Firestore and local cache."""
+        col_name = cls.get_collection_name(collection)
+        str_doc_id = str(doc_id).strip()
+        str_subdoc_id = str(subdoc_id).strip()
+
+        fs = get_firestore_client()
+        if is_firebase_live() and fs is not None:
+            try:
+                doc_ref = fs.collection(col_name).document(str_doc_id).collection(subcollection).document(str_subdoc_id).get()
+                if doc_ref.exists:
+                    d = doc_ref.to_dict()
+                    d["_firestore_id"] = doc_ref.id
+                    d["id"] = doc_ref.id
+                    return d
+            except Exception as e:
+                logger.error(f"Firestore get_subdocument error on '{col_name}/{str_doc_id}/{subcollection}/{str_subdoc_id}': {e}")
+
+        # Try live REST API
+        try:
+            from app.services.firestore_rest import fetch_live_subdocument
+            live_doc = fetch_live_subdocument(col_name, str_doc_id, subcollection, str_subdoc_id)
+            if live_doc:
+                db = _load_local_db()
+                cg_key = f"cg_{subcollection}"
+                if cg_key not in db:
+                    db[cg_key] = []
+                found = False
+                for i, item in enumerate(db[cg_key]):
+                    matches_sub = (str(item.get("id")) == str_subdoc_id or str(item.get("date")) == str_subdoc_id)
+                    matches_emp = (
+                        str(item.get("employeeId")) == str_doc_id
+                        or str(item.get("employee_id")) == str_doc_id
+                        or str_doc_id in str(item.get("_doc_path", ""))
+                    )
+                    if matches_sub and matches_emp:
+                        db[cg_key][i] = {**item, **live_doc}
+                        found = True
+                        break
+                if not found:
+                    db[cg_key].append(live_doc)
+                _save_local_db(db)
+                return live_doc
+        except Exception as e:
+            logger.debug(f"REST get_subdocument fallback: {e}")
+
+        # Local fallback
+        db = _load_local_db()
+        for k in [f"cg_{subcollection}", subcollection, "attendance", "attendances"]:
+            if k in db:
+                for item in db[k]:
+                    i_date = str(item.get("date") or item.get("id") or "")
+                    i_eid = str(item.get("employeeId") or item.get("employee_id") or item.get("uid") or item.get("user_id") or "")
+                    if (str(item.get("id")) == str_subdoc_id or i_date == str_subdoc_id) and (i_eid == str_doc_id or not i_eid):
+                        return item
+        return None
 
     @classmethod
     def save_subdocument(cls, collection: str, doc_id: Any, subcollection: str, subdoc_id: Any, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -239,6 +392,12 @@ class FirestoreService:
                 serialized["_firestore_id"] = str_subdoc_id
             except Exception as e:
                 logger.error(f"Firestore save_subdocument error on '{col_name}/{str_doc_id}/{subcollection}/{str_subdoc_id}': {e}")
+        else:
+            try:
+                from app.services.firestore_rest import create_or_set_live_subdocument
+                create_or_set_live_subdocument(col_name, str_doc_id, subcollection, str_subdoc_id, serialized)
+            except Exception as e:
+                logger.debug(f"REST create_or_set_live_subdocument fallback: {e}")
 
         # Local fallback
         db = _load_local_db()
@@ -247,7 +406,13 @@ class FirestoreService:
             db[cg_key] = []
         found = False
         for i, item in enumerate(db[cg_key]):
-            if str(item.get("id")) == str_subdoc_id or (item.get("date") == serialized.get("date") and item.get("employeeId") == str_doc_id):
+            matches_sub = (str(item.get("id")) == str_subdoc_id or str(item.get("date")) == str_subdoc_id)
+            matches_emp = (
+                str(item.get("employeeId")) == str_doc_id
+                or str(item.get("employee_id")) == str_doc_id
+                or str_doc_id in str(item.get("_doc_path", ""))
+            )
+            if matches_sub and matches_emp:
                 db[cg_key][i] = {**item, **serialized}
                 found = True
                 break
@@ -273,15 +438,35 @@ class FirestoreService:
                 fs.collection(col_name).document(str_doc_id).collection(subcollection).document(str_subdoc_id).update(serialized)
             except Exception as e:
                 logger.error(f"Firestore update_subdocument error on '{col_name}/{str_doc_id}/{subcollection}/{str_subdoc_id}': {e}")
+        else:
+            try:
+                from app.services.firestore_rest import patch_live_subdocument
+                patch_live_subdocument(col_name, str_doc_id, subcollection, str_subdoc_id, serialized)
+            except Exception as e:
+                logger.debug(f"REST patch_live_subdocument fallback: {e}")
 
         db = _load_local_db()
         cg_key = f"cg_{subcollection}"
-        if cg_key in db:
-            for i, item in enumerate(db[cg_key]):
-                if str(item.get("id")) == str_subdoc_id or (item.get("date") == serialized.get("date") and item.get("employeeId") == str_doc_id):
-                    db[cg_key][i].update(serialized)
-                    break
-            _save_local_db(db)
+        if cg_key not in db:
+            db[cg_key] = []
+        found = False
+        for i, item in enumerate(db[cg_key]):
+            matches_sub = (str(item.get("id")) == str_subdoc_id or str(item.get("date")) == str_subdoc_id)
+            matches_emp = (
+                str(item.get("employeeId")) == str_doc_id
+                or str(item.get("employee_id")) == str_doc_id
+                or str_doc_id in str(item.get("_doc_path", ""))
+            )
+            if matches_sub and matches_emp:
+                db[cg_key][i].update(serialized)
+                found = True
+                break
+        if not found:
+            entry = dict(serialized)
+            entry["id"] = str_subdoc_id
+            entry["employeeId"] = str_doc_id
+            db[cg_key].append(entry)
+        _save_local_db(db)
         return serialized
 
     @classmethod
@@ -453,6 +638,12 @@ class FirestoreService:
                 serialized["_firestore_id"] = str_id
             except Exception as e:
                 logger.error(f"Firestore save error on '{col_name}/{str_id}': {e}")
+        else:
+            try:
+                from app.services.firestore_rest import save_live_document
+                save_live_document(col_name, str_id, serialized)
+            except Exception as e:
+                logger.debug(f"[FirestoreREST] Background live save fallback: {e}")
 
         # Sync local fallback store
         db = _load_local_db()
@@ -500,6 +691,12 @@ class FirestoreService:
                 fs.collection(col_name).document(str_id).update(serialized)
             except Exception as e:
                 logger.error(f"Firestore update error on '{col_name}/{str_id}': {e}")
+        else:
+            try:
+                from app.services.firestore_rest import save_live_document
+                save_live_document(col_name, str_id, serialized)
+            except Exception as e:
+                logger.debug(f"[FirestoreREST] Background live update fallback: {e}")
 
         # Sync local
         db = _load_local_db()
@@ -541,6 +738,12 @@ class FirestoreService:
                 fs.collection(col_name).document(str_id).delete()
             except Exception as e:
                 logger.error(f"Firestore delete error on '{col_name}/{str_id}': {e}")
+        else:
+            try:
+                from app.services.firestore_rest import delete_live_document
+                delete_live_document(col_name, str_id)
+            except Exception as e:
+                logger.debug(f"[FirestoreREST] Background live delete fallback: {e}")
 
         db = _load_local_db()
         key = "attendances" if col_name == "attendance" else col_name
@@ -562,7 +765,26 @@ class FirestoreService:
 
     @classmethod
     def query(cls, entity: str, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Filter documents matching exact field values."""
+        """Filter documents matching exact field values using fast native Firestore queries with fallback."""
+        col_name = cls.get_collection_name(entity)
+        fs = get_firestore_client()
+        if is_firebase_live() and fs is not None and filters:
+            try:
+                q = fs.collection(col_name)
+                for k, v in filters.items():
+                    if v is not None:
+                        q = q.where(k, "==", v)
+                results = []
+                for doc in q.stream():
+                    d = doc.to_dict()
+                    d["_firestore_id"] = doc.id
+                    if "id" not in d:
+                        d["id"] = doc.id
+                    results.append(d)
+                return results
+            except Exception as e:
+                logger.debug(f"Native firestore query on '{col_name}' with {filters} failed ({e}), falling back to in-memory filter")
+
         items = cls.list_all(entity)
         results = []
         for item in items:
@@ -599,6 +821,10 @@ class FirestoreService:
 
 class FirestoreServiceWrapper:
     @staticmethod
+    def collection_group(group_id: str, filters: Optional[List[tuple]] = None) -> List[Dict[str, Any]]:
+        return FirestoreService.collection_group(group_id, filters)
+
+    @staticmethod
     def list_documents(collection: str, filters: Optional[List[tuple]] = None) -> List[Dict[str, Any]]:
         if not filters:
             return FirestoreService.list_all(collection)
@@ -630,6 +856,50 @@ class FirestoreServiceWrapper:
     @staticmethod
     def delete_document(collection: str, doc_id: Any) -> bool:
         return FirestoreService.delete(collection, str(doc_id))
+
+    @staticmethod
+    def sync_project_progress(project_id: Optional[str] = None, project_name: Optional[str] = None) -> Optional[int]:
+        if not project_id and not project_name:
+            return None
+
+        all_projects = FirestoreService.list_all("projects") or []
+        target_proj = None
+        for p in all_projects:
+            p_id = str(p.get("id") or "")
+            p_name = str(p.get("name") or "").strip().lower()
+            if project_id and p_id == str(project_id):
+                target_proj = p
+                break
+            if project_name and p_name == str(project_name).strip().lower():
+                target_proj = p
+                project_id = p_id
+                break
+
+        all_tasks = FirestoreService.list_all("project_tasks") or []
+        matching_tasks = []
+        for t in all_tasks:
+            t_pid = str(t.get("project_id") or "")
+            t_pname = str(t.get("project_name") or "").strip().lower()
+            if project_id and t_pid == str(project_id):
+                matching_tasks.append(t)
+            elif project_name and t_pname == str(project_name).strip().lower():
+                matching_tasks.append(t)
+
+        if not matching_tasks:
+            return None
+
+        total_prog = sum(int(t.get("progress", 0) or 0) for t in matching_tasks)
+        avg_progress = round(total_prog / len(matching_tasks))
+
+        if target_proj and project_id:
+            target_proj["progress"] = avg_progress
+            if avg_progress >= 100:
+                target_proj["status"] = "Completed"
+            elif target_proj.get("status") == "Completed" and avg_progress < 100:
+                target_proj["status"] = "In Progress"
+            FirestoreService.update("projects", str(project_id), target_proj)
+
+        return avg_progress
 
 
 firestore_service = FirestoreServiceWrapper()

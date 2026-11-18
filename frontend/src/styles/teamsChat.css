@@ -29,8 +29,11 @@
 .teams-chat-container {
   display: flex;
   height: 100%;
-  min-height: 520px;
-  max-height: calc(100vh - 85px);
+  min-height: 440px;
+  max-height: calc(100dvh - 104px);
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   background-color: #ffffff;
   border-radius: 16px;
   box-shadow: 0 4px 20px -2px rgba(100, 40, 232, 0.08), 0 1px 4px rgba(36, 33, 59, 0.04);
@@ -113,7 +116,7 @@
 
 /* 2. Conversations Sidebar */
 .teams-conversations-sidebar {
-  width: 330px;
+  width: clamp(240px, 28vw, 330px);
   background-color: var(--chat-sidebar-bg);
   border-right: 1px solid var(--chat-border);
   display: flex;
@@ -375,6 +378,13 @@
   color: var(--chat-text-secondary);
   font-weight: 500;
   flex-shrink: 0;
+  white-space: nowrap;
+  letter-spacing: -0.01em;
+}
+
+.teams-conv-time.online-status {
+  color: #22c55e;
+  font-weight: 600;
 }
 
 .teams-conv-snippet {
@@ -401,11 +411,26 @@
 /* 3. Center Main Chat Area */
 .teams-main-chat {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   background-color: var(--chat-bg);
   overflow: hidden;
   position: relative;
+}
+
+.teams-mobile-back-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid var(--chat-border);
+  background: var(--chat-surface);
+  color: var(--chat-text);
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 .teams-chat-header {
@@ -1036,7 +1061,7 @@
 
 /* 5. Right Details Drawer */
 .teams-details-drawer {
-  width: 310px;
+  width: clamp(260px, 26vw, 310px);
   background-color: #ffffff;
   border-left: 1px solid var(--chat-border);
   display: flex;
@@ -1207,23 +1232,44 @@
 }
 
 /* Responsive */
-@media (max-width: 992px) {
+@media (max-width: 1024px) {
   .teams-app-rail {
     display: none;
   }
   .teams-details-drawer {
-    display: none;
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(320px, 90vw);
+    z-index: 30;
+    box-shadow: -8px 0 24px rgba(15, 23, 42, 0.14);
   }
 }
 
 @media (max-width: 768px) {
   .teams-chat-container {
-    border-radius: 0;
-    border: none;
-    height: calc(100vh - 70px);
+    border-radius: 12px;
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
   }
   .teams-conversations-sidebar {
     width: 100%;
+    border-right: none;
+  }
+  .teams-chat-container:not(.mobile-chat-open) .teams-main-chat {
+    display: none;
+  }
+  .teams-chat-container.mobile-chat-open .teams-conversations-sidebar {
+    display: none;
+  }
+  .teams-chat-container.mobile-chat-open .teams-main-chat {
+    display: flex;
+    width: 100%;
+  }
+  .teams-mobile-back-btn {
+    display: inline-flex;
   }
 }
 
@@ -1303,4 +1349,273 @@
   background-color: var(--chat-online);
   display: inline-block;
   margin: 0 2px;
+}
+
+/* Header Three-Dots Dropdown Menu */
+.teams-header-menu-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.teams-header-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 210px;
+  background-color: #ffffff;
+  border: 1px solid var(--chat-border);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(36, 33, 59, 0.14), 0 2px 6px rgba(113, 61, 229, 0.08);
+  padding: 6px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: teamsDropdownFade 0.14s ease-out;
+}
+
+@keyframes teamsDropdownFade {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.teams-header-dropdown-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--chat-text-primary);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+
+.teams-header-dropdown-item:hover {
+  background-color: var(--chat-hover);
+  color: var(--chat-primary);
+}
+
+.teams-header-dropdown-item.danger {
+  color: #dc2626;
+}
+
+.teams-header-dropdown-item.danger:hover {
+  background-color: #fef2f2;
+  color: #b91c1c;
+}
+
+.teams-header-dropdown-item-badge {
+  margin-left: auto;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background-color: var(--chat-primary-light);
+  color: var(--chat-primary);
+}
+
+.teams-header-dropdown-divider {
+  height: 1px;
+  background-color: var(--chat-border);
+  margin: 4px 6px;
+}
+
+/* Sidebar Pinned / Muted Indicators */
+.teams-conv-meta-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.teams-pin-indicator {
+  color: var(--chat-primary);
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.85;
+}
+
+.teams-mute-indicator {
+  color: #94a3b8;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Clear Chat Confirmation Modal */
+.teams-confirm-modal-card {
+  background: #ffffff;
+  border-radius: 16px;
+  border: 1px solid var(--chat-border);
+  box-shadow: 0 20px 45px rgba(36, 33, 59, 0.2);
+  width: 92%;
+  max-width: 400px;
+  padding: 22px;
+  animation: teamsDropdownFade 0.15s ease-out;
+}
+
+.teams-confirm-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.teams-confirm-cancel-btn {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--chat-border);
+  background: #ffffff;
+  color: var(--chat-text-primary);
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.teams-confirm-cancel-btn:hover {
+  background-color: var(--chat-hover);
+}
+
+.teams-confirm-danger-btn {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: none;
+  background-color: #dc2626;
+  color: #ffffff;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.teams-confirm-danger-btn:hover:not(:disabled) {
+  background-color: #b91c1c;
+}
+
+.teams-confirm-danger-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+/* WhatsApp-Style Delete for Me Confirmation Dialog */
+.teams-delete-dialog-card {
+  background: #ffffff;
+  border-radius: 12px;
+  border: none;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  width: 90%;
+  max-width: 420px;
+  padding: 24px 24px 18px 24px;
+  animation: teamsDropdownFade 0.18s ease-out;
+}
+
+.teams-delete-dialog-title {
+  margin: 0;
+  font-size: 1.18rem;
+  font-weight: 700;
+  color: #1e293b;
+  letter-spacing: -0.01em;
+}
+
+.teams-delete-dialog-message {
+  margin: 14px 0 24px 0;
+  font-size: 0.94rem;
+  color: #334155;
+  line-height: 1.5;
+}
+
+.teams-delete-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+}
+
+.teams-delete-dialog-btn {
+  background: transparent;
+  border: none;
+  font-size: 0.88rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.teams-delete-dialog-btn.cancel {
+  color: #713DE5;
+}
+
+.teams-delete-dialog-btn.cancel:hover {
+  background-color: #F4EFFF;
+}
+
+.teams-delete-dialog-btn.delete {
+  color: #DC2626;
+}
+
+.teams-delete-dialog-btn.delete:hover:not(:disabled) {
+  background-color: #FEF2F2;
+}
+
+.teams-delete-dialog-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Toast Notifications */
+.teams-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  border-radius: 10px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+  z-index: 2000;
+  animation: teamsToastSlideUp 0.25s ease-out;
+}
+
+.teams-toast.success {
+  background-color: #0F172A;
+  color: #F8FAFC;
+}
+
+.teams-toast.error {
+  background-color: #DC2626;
+  color: #FFFFFF;
+}
+
+@keyframes teamsToastSlideUp {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 15px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
 }

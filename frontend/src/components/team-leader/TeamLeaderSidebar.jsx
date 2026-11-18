@@ -16,10 +16,21 @@ import {
 } from 'lucide-react';
 import BrandLogo from '../common/BrandLogo';
 
-export default function TeamLeaderSidebar({ onClose, activeTab, onSelectTab }) {
+export default function TeamLeaderSidebar({ onClose, activeTab, onSelectTab, onOpenCreateTask }) {
   const navigate = useNavigate();
 
   const handleSelect = (tabKey) => {
+    if (tabKey === 'create-task') {
+      if (onOpenCreateTask) {
+        onOpenCreateTask();
+      } else if (onSelectTab) {
+        onSelectTab('create-task');
+      }
+      if (onClose) {
+        onClose();
+      }
+      return;
+    }
     if (onSelectTab) {
       onSelectTab(tabKey);
     }
@@ -114,7 +125,11 @@ export default function TeamLeaderSidebar({ onClose, activeTab, onSelectTab }) {
               {section.title}
             </div>
             {section.items.map((item, idx) => {
-              const isActive = activeTab === item.key;
+              const isActive =
+                activeTab === item.key ||
+                (item.key === 'task-review' && activeTab === 'submitted-tasks') ||
+                (item.key === 'submitted-tasks' && activeTab === 'task-review') ||
+                (item.key === 'projects' && activeTab === 'dashboard');
               const IconComp = item.icon;
 
               return (

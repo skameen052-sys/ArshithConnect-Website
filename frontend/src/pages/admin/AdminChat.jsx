@@ -7,7 +7,17 @@ import TeamsChatWorkspace from '../../components/chat/TeamsChatWorkspace';
  */
 export default function AdminChat() {
   return (
-    <div className="admin-chat-page animate-fade-in" style={{ padding: '0 4px 10px 4px', height: 'calc(100vh - 85px)', display: 'flex', flexDirection: 'column' }}>
+    <div
+      className="admin-chat-page animate-fade-in"
+      style={{
+        padding: '0 4px 4px 4px',
+        height: 'calc(100dvh - 108px)',
+        minHeight: '460px',
+        minWidth: 0,
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
       <TeamsChatWorkspace />
     </div>
   );

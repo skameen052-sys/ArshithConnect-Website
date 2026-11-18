@@ -51,6 +51,7 @@ captures/
 .externalNativeBuild/
 .cxx/
 ArshithConnect3/
+arshithApp/
 
 # Local Environment & Secrets
 .env

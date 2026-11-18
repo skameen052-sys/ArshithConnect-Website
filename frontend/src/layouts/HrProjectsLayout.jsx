@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import HrProjectsNavbar from '../components/hr-projects/HrProjectsNavbar';
 import HrProjectsSidebar from '../components/hr-projects/HrProjectsSidebar';
 import HrProjectsDashboard from '../pages/hr-projects/HrProjectsDashboard';
@@ -13,9 +13,24 @@ import '../styles/responsive.css';
  */
 export default function HrProjectsLayout() {
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const mainAreaRef = useRef(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState(() => searchParams.get('tab') || 'dashboard');
+  const [openAddProjectSignal, setOpenAddProjectSignal] = useState(0);
+
+  const handleOpenAddProject = () => {
+    setOpenAddProjectSignal((prev) => prev + 1);
+    setIsDrawerOpen(false);
+  };
+
+  // Sync activeTab with URL search parameters
+  useEffect(() => {
+    const tabFromUrl = searchParams.get('tab');
+    if (tabFromUrl && tabFromUrl !== activeTab) {
+      setActiveTab(tabFromUrl);
+    }
+  }, [searchParams]);
 
   // Close drawer and reset main area scroll on route change
   useEffect(() => {
@@ -54,6 +69,7 @@ export default function HrProjectsLayout() {
 
   const handleSelectTab = (tabKey) => {
     setActiveTab(tabKey);
+    setSearchParams({ tab: tabKey });
     setIsDrawerOpen(false);
     if (mainAreaRef.current) {
       mainAreaRef.current.scrollTop = 0;
@@ -82,6 +98,7 @@ export default function HrProjectsLayout() {
           onClose={() => setIsDrawerOpen(false)}
           activeTab={activeTab}
           onSelectTab={handleSelectTab}
+          onOpenAddProject={handleOpenAddProject}
         />
       </aside>
 
@@ -106,7 +123,8 @@ export default function HrProjectsLayout() {
           <main className="admin-page-content animate-fade-in">
             <HrProjectsDashboard
               activeTab={activeTab}
-              onTabChange={(t) => setActiveTab(t)}
+              onTabChange={handleSelectTab}
+              openAddProjectSignal={openAddProjectSignal}
             />
           </main>
         </div>

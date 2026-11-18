@@ -4,22 +4,20 @@ import { Eye, EyeOff, Loader2, Briefcase, ArrowLeft, AlertCircle, CheckCircle2 }
 import BrandLogo from '../../components/common/BrandLogo';
 import PortalSwitcher from '../../components/common/PortalSwitcher';
 import { teamLeaderService } from '../../services/teamLeaderService';
+import { hasActiveAuthStorage } from '../../utils/authSession';
 import '../../styles/auth.css';
 
 export default function TeamLeaderLogin() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const role = localStorage.getItem('arshith_role');
-    const user = localStorage.getItem('arshith_user');
-    const token = localStorage.getItem('arshith_auth_token');
-    if (role === 'team_leader' && user && token) {
+    if (hasActiveAuthStorage(['team_leader', 'admin', 'hr_projects', 'hr'])) {
       navigate('/teamlead/dashboard', { replace: true });
     }
   }, [navigate]);
 
   const [formData, setFormData] = useState({
-    email: 'teamlead@arshith.com',
+    email: '',
     password: '',
   });
   const [showPassword, setShowPassword] = useState(false);
@@ -58,8 +56,8 @@ export default function TeamLeaderLogin() {
         password: formData.password,
       });
 
-      if (res?.role === 'team_leader' || res?.access_token) {
-        navigate('/teamlead/dashboard');
+      if (res?.access_token) {
+        navigate('/teamlead/dashboard', { replace: true });
       }
     } catch (err) {
       const detail = err.response?.data?.detail || err.message || 'Invalid credentials.';
@@ -71,15 +69,6 @@ export default function TeamLeaderLogin() {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const handleFillDemo = () => {
-    setFormData({
-      email: 'teamlead@arshith.com',
-      password: 'TeamLead@123',
-    });
-    setErrors({});
-    setApprovalWarning(null);
   };
 
   return (
@@ -193,7 +182,7 @@ export default function TeamLeaderLogin() {
                   id="tl-email"
                   type="email"
                   className={`form-input-auth ${errors.email ? 'form-input-error' : ''}`}
-                  placeholder="e.g. teamlead@arshith.com"
+                  placeholder="e.g. name@leadarshith.com"
                   value={formData.email}
                   onChange={(e) => {
                     setFormData({ ...formData, email: e.target.value });
@@ -289,40 +278,6 @@ export default function TeamLeaderLogin() {
                 }}
               >
                 REGISTER AS TEAM LEADER
-              </button>
-            </div>
-
-            {/* Demo Quick Fill Helper */}
-            <div
-              style={{
-                marginTop: '16px',
-                padding: '10px 12px',
-                borderRadius: '8px',
-                backgroundColor: '#f8fafc',
-                border: '1px solid #e2e8f0',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}
-            >
-              <div style={{ fontSize: '0.74rem', color: '#64748b' }}>
-                Demo Approved TL: <strong>teamlead@arshith.com</strong>
-              </div>
-              <button
-                type="button"
-                onClick={handleFillDemo}
-                style={{
-                  padding: '4px 8px',
-                  fontSize: '0.72rem',
-                  fontWeight: '700',
-                  color: '#0b3d2b',
-                  backgroundColor: '#ecfdf5',
-                  border: '1px solid #a7f3d0',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                }}
-              >
-                Auto Fill
               </button>
             </div>
           </form>

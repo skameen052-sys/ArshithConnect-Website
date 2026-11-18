@@ -17,6 +17,7 @@ except ImportError:
     HAS_FIREBASE_ADMIN = False
 
 from app.core.config import settings
+from app.core.security import is_firebase_id_token_format
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -155,6 +156,8 @@ def get_storage_bucket() -> Any:
 
 def verify_firebase_token(id_token: str) -> Optional[dict]:
     """Verify Firebase Authentication ID token."""
+    if not is_firebase_id_token_format(id_token):
+        return None
     if not is_firebase_live():
         return None
     try:
@@ -169,8 +172,6 @@ def verify_credentials_with_firebase(email: str, password: str) -> Optional[dict
     Authenticate email and password directly against Firebase Authentication REST API.
     Returns dict with {uid, email, idToken} on success, None on failure.
     """
-    if not is_firebase_live():
-        return None
     api_key = getattr(settings, "FIREBASE_WEB_API_KEY", "")
     if not api_key:
         return None
@@ -182,7 +183,7 @@ def verify_credentials_with_firebase(email: str, password: str) -> Optional[dict
     }).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=2.5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             return {
                 "uid": data.get("localId"),

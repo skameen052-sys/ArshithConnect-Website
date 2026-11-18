@@ -7,7 +7,17 @@ import TeamsChatWorkspace from '../../components/chat/TeamsChatWorkspace';
  */
 export default function EmployeeChat() {
   return (
-    <div className="employee-chat-page animate-fade-in" style={{ padding: '0 4px 10px 4px', height: 'calc(100vh - 85px)', display: 'flex', flexDirection: 'column' }}>
+    <div
+      className="employee-chat-page animate-fade-in"
+      style={{
+        padding: '0 4px 4px 4px',
+        height: 'calc(100dvh - 126px)',
+        minHeight: '460px',
+        minWidth: 0,
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
       <TeamsChatWorkspace />
     </div>
   );

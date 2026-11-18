@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import TeamLeaderNavbar from '../components/team-leader/TeamLeaderNavbar';
 import TeamLeaderSidebar from '../components/team-leader/TeamLeaderSidebar';
 import TeamLeaderDashboard from '../pages/team-leader/TeamLeaderDashboard';
+import EmployeeChat from '../pages/employee/EmployeeChat';
 import '../styles/global.css';
 import '../styles/admin.css';
 import '../styles/responsive.css';
@@ -13,9 +14,26 @@ import '../styles/responsive.css';
  */
 export default function TeamLeaderLayout() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const isChatRoute = location.pathname.endsWith('/chat');
   const mainAreaRef = useRef(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState('projects');
+  const [activeTab, setActiveTab] = useState(() => searchParams.get('tab') || 'projects');
+  const [openCreateTaskSignal, setOpenCreateTaskSignal] = useState(0);
+
+  const handleOpenCreateTask = () => {
+    setOpenCreateTaskSignal((prev) => prev + 1);
+    setIsDrawerOpen(false);
+  };
+
+  // Keep activeTab in sync with URL search parameter
+  useEffect(() => {
+    const tabFromUrl = searchParams.get('tab');
+    if (tabFromUrl && tabFromUrl !== activeTab) {
+      setActiveTab(tabFromUrl);
+    }
+  }, [searchParams]);
 
   // Close drawer and reset main area scroll on route change
   useEffect(() => {
@@ -54,6 +72,11 @@ export default function TeamLeaderLayout() {
 
   const handleSelectTab = (tabKey) => {
     setActiveTab(tabKey);
+    if (isChatRoute) {
+      navigate(`/teamlead/dashboard?tab=${encodeURIComponent(tabKey)}`);
+    } else {
+      setSearchParams({ tab: tabKey });
+    }
     setIsDrawerOpen(false);
     if (mainAreaRef.current) {
       mainAreaRef.current.scrollTop = 0;
@@ -82,6 +105,7 @@ export default function TeamLeaderLayout() {
           onClose={() => setIsDrawerOpen(false)}
           activeTab={activeTab}
           onSelectTab={handleSelectTab}
+          onOpenCreateTask={handleOpenCreateTask}
         />
       </aside>
 
@@ -104,10 +128,15 @@ export default function TeamLeaderLayout() {
         {/* Content Container */}
         <div className="dashboard-container admin-content">
           <main className="admin-page-content animate-fade-in">
-            <TeamLeaderDashboard
-              activeTab={activeTab}
-              onTabChange={(t) => setActiveTab(t)}
-            />
+            {isChatRoute ? (
+              <EmployeeChat />
+            ) : (
+              <TeamLeaderDashboard
+                activeTab={activeTab}
+                onTabChange={handleSelectTab}
+                openCreateTaskSignal={openCreateTaskSignal}
+              />
+            )}
           </main>
         </div>
       </div>

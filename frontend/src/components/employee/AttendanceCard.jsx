@@ -8,22 +8,145 @@ import AttendancePhotoDisplay from './AttendancePhotoDisplay';
 import LateCheckInModal from './LateCheckInModal';
 import AttendanceCelebrationModal from './AttendanceCelebrationModal';
 
+const formatDisplayTime = (val) => {
+  if (!val || val === '--') return '--';
+  const s = String(val).trim();
+  if (s.includes('T') || s.endsWith('Z')) {
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      return d.toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      });
+    }
+  }
+  return s;
+};
+
+const parseTimeCandidate = (rawVal, recordDateStr) => {
+  if (!rawVal || rawVal === '--') return null;
+
+  if (rawVal instanceof Date) {
+    return !isNaN(rawVal.getTime()) ? rawVal : null;
+  }
+
+  if (typeof rawVal === 'object') {
+    if (typeof rawVal.toDate === 'function') {
+      const d = rawVal.toDate();
+      return d && !isNaN(d.getTime()) ? d : null;
+    }
+    const secs = rawVal.seconds ?? rawVal._seconds;
+    if (secs !== undefined && secs !== null) {
+      const d = new Date(Number(secs) * 1000);
+      return !isNaN(d.getTime()) ? d : null;
+    }
+  }
+
+  if (typeof rawVal === 'number') {
+    const d = new Date(rawVal > 1e11 ? rawVal : rawVal * 1000);
+    return !isNaN(d.getTime()) ? d : null;
+  }
+
+  const s = String(rawVal).trim();
+  if (!s || s === 'None' || s === 'null') return null;
+
+  // Full ISO timestamp or date-time string
+  if (s.includes('T') || s.endsWith('Z') || /^\d{4}-\d{2}-\d{2}/.test(s)) {
+    const parsedIso = new Date(s);
+    if (!isNaN(parsedIso.getTime())) return parsedIso;
+  }
+
+  // Time-only string such as "09:24 AM", "9:24:10 AM", or "14:30"
+  const match12 = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)$/i);
+  const match24 = !match12 ? s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/) : null;
+  if (match12 || match24) {
+    const now = new Date();
+    let year = now.getFullYear();
+    let month = now.getMonth();
+    let day = now.getDate();
+
+    if (recordDateStr && /^\d{4}-\d{2}-\d{2}/.test(String(recordDateStr).trim())) {
+      const parts = String(recordDateStr).trim().slice(0, 10).split('-').map(Number);
+      if (parts.length === 3 && parts.every((n) => !isNaN(n))) {
+        [year, month, day] = [parts[0], parts[1] - 1, parts[2]];
+      }
+    }
+
+    let hours = Number((match12 || match24)[1]);
+    const mins = Number((match12 || match24)[2]);
+    const secs = Number((match12 || match24)[3] || 0);
+    if (match12) {
+      const meridiem = match12[4].toUpperCase();
+      if (meridiem === 'AM' && hours === 12) hours = 0;
+      else if (meridiem === 'PM' && hours < 12) hours += 12;
+    }
+    const d = new Date(year, month, day, hours, mins, secs, 0);
+    return !isNaN(d.getTime()) ? d : null;
+  }
+
+  return null;
+};
+
+const parseAttendanceDateTime = (timestampVal, displayTimeVal, recordDateStr) =>
+  parseTimeCandidate(timestampVal, recordDateStr) || parseTimeCandidate(displayTimeVal, recordDateStr);
+
+const formatElapsedHms = (diffMs) => {
+  const diffSecs = Math.max(0, Math.floor(diffMs / 1000));
+  const hrs = Math.floor(diffSecs / 3600);
+  const mins = Math.floor((diffSecs % 3600) / 60);
+  const secs = diffSecs % 60;
+  return `${hrs.toString().padStart(2, '0')}h ${mins.toString().padStart(2, '0')}m ${secs.toString().padStart(2, '0')}s`;
+};
+
+const formatSummaryHrsMins = (diffMs) => {
+  const diffSecs = Math.max(0, Math.floor(diffMs / 1000));
+  const hrs = Math.floor(diffSecs / 3600);
+  const mins = Math.floor((diffSecs % 3600) / 60);
+  return `${hrs.toString().padStart(2, '0')} hrs ${mins.toString().padStart(2, '0')} mins`;
+};
+
+const getTodayIsoDate = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 export default function AttendanceCard() {
   const [currentTime, setCurrentTime] = useState(new Date());
+
+  const todayIso = getTodayIsoDate();
+  const cachedAttendance = (() => {
+    try {
+      const raw = localStorage.getItem(`arshith_attendance_cache_${todayIso}`);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && parsed.date === todayIso ? parsed : null;
+    } catch {
+      return null;
+    }
+  })();
 
   // Current authenticated user info
   const [currentUser, setCurrentUser] = useState(() => authService.getCurrentUser());
 
-  // Attendance state loaded from backend
-  const [recordId, setRecordId] = useState(null);
-  const [isCheckedIn, setIsCheckedIn] = useState(false);
-  const [isCompleted, setIsCompleted] = useState(false);
-  const [checkInTime, setCheckInTime] = useState('--');
-  const [checkOutTime, setCheckOutTime] = useState('--');
-  const [workingDuration, setWorkingDuration] = useState('--');
-  const [workMode, setWorkMode] = useState('WFO');
-  const [status, setStatus] = useState('Not Checked In');
-  const [checkInDateObj, setCheckInDateObj] = useState(null);
+  // Attendance state loaded from backend / instant cache
+  const [recordId, setRecordId] = useState(cachedAttendance?.id || null);
+  const [isCheckedIn, setIsCheckedIn] = useState(Boolean(cachedAttendance?.isCheckedIn));
+  const [isCompleted, setIsCompleted] = useState(Boolean(cachedAttendance?.isCompleted));
+  const [checkInTime, setCheckInTime] = useState(formatDisplayTime(cachedAttendance?.checkInTime) || '--');
+  const [checkOutTime, setCheckOutTime] = useState(formatDisplayTime(cachedAttendance?.checkOutTime) || '--');
+  const [workingDuration, setWorkingDuration] = useState(cachedAttendance?.workingDuration || '--');
+  const [workMode, setWorkMode] = useState(cachedAttendance?.workMode || 'WFO');
+  const [status, setStatus] = useState(cachedAttendance?.status || 'Not Checked In');
+  const [checkInDateObj, setCheckInDateObj] = useState(() => {
+    if (cachedAttendance?.isCheckedIn && !cachedAttendance?.isCompleted) {
+      return parseAttendanceDateTime(cachedAttendance.checkInTimestamp, cachedAttendance.checkInTime, todayIso);
+    }
+    return null;
+  });
 
   // Late check-in state (Section 2 & 6)
   const [isLate, setIsLate] = useState(false);
@@ -107,8 +230,8 @@ export default function AttendanceCard() {
           setWorkMode(effectiveMode);
         }
       }
-      setCheckInTime(data.checkInTime || '--');
-      setCheckOutTime(data.checkOutTime || '--');
+      setCheckInTime(formatDisplayTime(data.checkInTime) || '--');
+      setCheckOutTime(formatDisplayTime(data.checkOutTime) || '--');
       setHasCheckInPhoto(Boolean(data.hasCheckInPhoto));
       setGpsLatitude(data.checkInLatitude ?? null);
       setGpsLongitude(data.checkInLongitude ?? null);
@@ -123,37 +246,51 @@ export default function AttendanceCard() {
       setLateReasonSubmittedAt(data.lateReasonSubmittedAt || null);
 
       if (data.isCompleted) {
-        // Attendance completed and locked for today (matches reference screenshot 2)
+        // Attendance completed and locked for today
         setIsCompleted(true);
         setIsCheckedIn(false);
+        setCheckInDateObj(null);
         setStatus('Completed');
-        setWorkingDuration(data.workingDuration || '--');
+        const hasValidDur = data.workingDuration && data.workingDuration !== '--' && data.workingDuration !== 'In Progress';
+        if (hasValidDur) {
+          setWorkingDuration(data.workingDuration);
+        } else {
+          const parsedIn = parseAttendanceDateTime(data.checkInTimestamp, data.checkInTime, data.date);
+          const parsedOut = parseAttendanceDateTime(data.checkOutTimestamp, data.checkOutTime, data.date);
+          if (parsedIn && parsedOut) {
+            setWorkingDuration(formatSummaryHrsMins(parsedOut.getTime() - parsedIn.getTime()));
+          } else {
+            setWorkingDuration('--');
+          }
+        }
       } else if (data.isCheckedIn) {
         // Active check-in state
         setIsCompleted(false);
         setIsCheckedIn(true);
         setStatus(data.status || 'Present');
 
-        // Setup base time for live duration counter
-        if (data.checkInTimestamp) {
-          const parsed = new Date(data.checkInTimestamp);
-          if (!isNaN(parsed.getTime())) {
-            setCheckInDateObj(parsed);
-          }
-        } else if (data.checkInTime && data.checkInTime !== '--') {
-          const todayStr = new Date().toISOString().split('T')[0];
-          const parsed = new Date(`${todayStr} ${data.checkInTime}`);
-          if (!isNaN(parsed.getTime())) {
-            setCheckInDateObj(parsed);
-          }
+        const parsedIn = parseAttendanceDateTime(data.checkInTimestamp, data.checkInTime, data.date);
+        if (parsedIn) {
+          setCheckInDateObj(parsedIn);
+          setWorkingDuration(formatElapsedHms(Date.now() - parsedIn.getTime()));
+        } else {
+          setCheckInDateObj(null);
+          const fallbackDur = data.workingDuration && data.workingDuration !== 'In Progress' ? data.workingDuration : '--';
+          setWorkingDuration(fallbackDur);
         }
       } else {
         // Not checked in yet
         setIsCompleted(false);
         setIsCheckedIn(false);
+        setCheckInDateObj(null);
         setStatus('Not Checked In');
         setWorkingDuration('--');
       }
+
+      // Persist latest authoritative state to cache for instant rendering
+      try {
+        localStorage.setItem(`arshith_attendance_cache_${data.date || todayIso}`, JSON.stringify(data));
+      } catch (_) {}
     } catch (err) {
       console.warn('Could not fetch today attendance status from backend', err);
     }
@@ -161,22 +298,41 @@ export default function AttendanceCard() {
 
   useEffect(() => {
     fetchTodayStatus();
+
+    // Fast polling every 10 seconds for live attendance sync across mobile/web
+    const pollTimer = setInterval(() => {
+      fetchTodayStatus();
+    }, 10000);
+
+    // Immediate sync whenever user refocuses tab or app becomes visible
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchTodayStatus();
+      }
+    };
+    const handleFocus = () => {
+      fetchTodayStatus();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      clearInterval(pollTimer);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleFocus);
+    };
   }, []);
 
   // Live Working Duration counter when checked in
   useEffect(() => {
     let durationTimer;
     if (isCheckedIn && !isCompleted && checkInDateObj) {
-      durationTimer = setInterval(() => {
-        const diffMs = Math.max(0, new Date() - checkInDateObj);
-        const diffSecs = Math.floor(diffMs / 1000);
-        const hrs = Math.floor(diffSecs / 3600);
-        const mins = Math.floor((diffSecs % 3600) / 60);
-        const secs = diffSecs % 60;
-        setWorkingDuration(
-          `${hrs.toString().padStart(2, '0')}h ${mins.toString().padStart(2, '0')}m ${secs.toString().padStart(2, '0')}s`
-        );
-      }, 1000);
+      const updateElapsed = () => {
+        setWorkingDuration(formatElapsedHms(Date.now() - checkInDateObj.getTime()));
+      };
+      updateElapsed();
+      durationTimer = setInterval(updateElapsed, 1000);
     }
     return () => clearInterval(durationTimer);
   }, [isCheckedIn, isCompleted, checkInDateObj]);
@@ -216,10 +372,14 @@ export default function AttendanceCard() {
     setIsCheckedIn(true);
     setIsCompleted(false);
     setRecordId(res.id || null);
-    setCheckInTime(res.checkIn || res.checkInTime || 'Just now');
+    setCheckInTime(formatDisplayTime(res.checkIn || res.checkInTime) || 'Just now');
     setWorkMode(res.workMode || workMode);
     setStatus(res.status || 'Present');
-    setCheckInDateObj(new Date());
+    const startedAt =
+      parseAttendanceDateTime(res.timestamp || res.attendance?.check_in_timestamp, res.checkIn || res.checkInTime) ||
+      new Date();
+    setCheckInDateObj(startedAt);
+    setWorkingDuration(formatElapsedHms(Date.now() - startedAt.getTime()));
     setHasCheckInPhoto(true);
     setGpsLatitude(res.checkInLatitude ?? null);
     setGpsLongitude(res.checkInLongitude ?? null);
@@ -237,12 +397,31 @@ export default function AttendanceCard() {
     setToastMessage(`Checked In (${res.workMode || workMode}) - Status: ${res.status || 'Present'}`);
     setTimeout(() => setToastMessage(''), 4000);
 
+    // Save optimistic cache immediately
+    try {
+      localStorage.setItem(`arshith_attendance_cache_${todayIso}`, JSON.stringify({
+        id: res.id || recordId,
+        date: todayIso,
+        isCheckedIn: true,
+        isCompleted: false,
+        checkInTime: formatDisplayTime(res.checkIn || res.checkInTime) || 'Just now',
+        checkOutTime: '--',
+        checkInTimestamp: startedAt.toISOString(),
+        workMode: res.workMode || workMode,
+        status: res.status || 'Present',
+        workingDuration: formatElapsedHms(Date.now() - startedAt.getTime()),
+      }));
+    } catch (_) {}
+
+    // Synchronize authoritative state in background
+    fetchTodayStatus();
+
     // Trigger celebratory Check-In Animation
     setCelebrationState({
       isOpen: true,
       type: 'check-in',
       data: {
-        checkInTime: res.checkIn || res.checkInTime || 'Just now',
+        checkInTime: formatDisplayTime(res.checkIn || res.checkInTime) || 'Just now',
         workMode: res.workMode || workMode,
         status: res.status || 'Present',
       },
@@ -273,20 +452,38 @@ export default function AttendanceCard() {
       setIsCheckedIn(false);
       setIsCompleted(true);
       setStatus('Completed');
-      setCheckOutTime(res.checkOut || res.checkOutTime || 'Just now');
+      setCheckOutTime(formatDisplayTime(res.checkOut || res.checkOutTime) || 'Just now');
       if (res.duration || res.workingDuration) {
         setWorkingDuration(res.duration || res.workingDuration);
       }
 
-      setToastMessage(`Checked Out successfully at ${res.checkOut || res.checkOutTime || 'now'}`);
+      setToastMessage(`Checked Out successfully at ${formatDisplayTime(res.checkOut || res.checkOutTime) || 'now'}`);
       setTimeout(() => setToastMessage(''), 4500);
+
+      // Save optimistic checkout cache immediately
+      try {
+        localStorage.setItem(`arshith_attendance_cache_${todayIso}`, JSON.stringify({
+          id: res.id || recordId,
+          date: todayIso,
+          isCheckedIn: false,
+          isCompleted: true,
+          checkInTime: checkInTime,
+          checkOutTime: formatDisplayTime(res.checkOut || res.checkOutTime) || 'Just now',
+          workingDuration: res.duration || res.workingDuration || workingDuration,
+          workMode: workMode,
+          status: 'Completed',
+        }));
+      } catch (_) {}
+
+      // Refresh authoritative attendance status
+      fetchTodayStatus();
 
       // Trigger celebratory Check-Out Animation
       setCelebrationState({
         isOpen: true,
         type: 'check-out',
         data: {
-          checkOutTime: res.checkOut || res.checkOutTime || 'Just now',
+          checkOutTime: formatDisplayTime(res.checkOut || res.checkOutTime) || 'Just now',
           workingDuration: res.duration || res.workingDuration || workingDuration,
           status: 'Completed',
         },
@@ -352,11 +549,11 @@ export default function AttendanceCard() {
       <div className="attendance-info-grid">
         <div className="attendance-info-row">
           <span className="info-label">Check-in:</span>
-          <span className="info-val">{checkInTime}</span>
+          <span className="info-val">{formatDisplayTime(checkInTime)}</span>
         </div>
         <div className="attendance-info-row">
           <span className="info-label">Check-out:</span>
-          <span className="info-val">{checkOutTime}</span>
+          <span className="info-val">{formatDisplayTime(checkOutTime)}</span>
         </div>
         <div className="attendance-info-row">
           <span className="info-label">Working Duration:</span>
@@ -597,29 +794,7 @@ export default function AttendanceCard() {
         </div>
       )}
 
-      {/* Compact Check-In Confirmation Banner (photo card is hidden from normal dashboard) */}
-      {isCheckedIn && !isCompleted && (
-        <div className="attendance-wfo-recorded-banner animate-fade-in">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <ShieldCheck size={16} color="#059669" />
-            <span>
-              {workMode === 'WFO'
-                ? 'WFO attendance recorded'
-                : 'WFH attendance recorded'}
-            </span>
-          </div>
-          {hasCheckInPhoto && recordId && (
-            <button
-              type="button"
-              className="btn-view-verification-text"
-              onClick={() => setIsEvidenceModalOpen(true)}
-              title="View verification evidence"
-            >
-              View Verification
-            </button>
-          )}
-        </div>
-      )}
+      {/* Compact Check-In Confirmation Banner hidden per user request */}
 
       {/* Daily Lock Message */}
       {isCompleted && (

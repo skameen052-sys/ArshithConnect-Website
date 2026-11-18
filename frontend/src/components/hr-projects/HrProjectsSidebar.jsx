@@ -3,11 +3,22 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { X, FolderKanban, Users, CheckCircle2, UserCheck, PlusCircle, BarChart3, Activity } from 'lucide-react';
 import BrandLogo from '../common/BrandLogo';
 
-export default function HrProjectsSidebar({ onClose, activeTab, onSelectTab }) {
+export default function HrProjectsSidebar({ onClose, activeTab, onSelectTab, onOpenAddProject }) {
   const navigate = useNavigate();
   const location = useLocation();
 
   const handleSelect = (tabKey) => {
+    if (tabKey === 'add-project') {
+      if (onOpenAddProject) {
+        onOpenAddProject();
+      } else if (onSelectTab) {
+        onSelectTab('add-project');
+      }
+      if (onClose) {
+        onClose();
+      }
+      return;
+    }
     if (onSelectTab) {
       onSelectTab(tabKey);
     }

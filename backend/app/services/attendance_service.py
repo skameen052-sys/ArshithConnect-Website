@@ -79,6 +79,32 @@ def format_duration_str(seconds: int) -> str:
     return f"{hrs:02d} hrs {mins:02d} mins"
 
 
+def parse_time_display(val: Any) -> str:
+    """Parse Timestamp, datetime, or time string to standard human-readable 12-hour format in configured timezone (IST)."""
+    if not val:
+        return "--"
+    tz = get_attendance_timezone()
+    if isinstance(val, datetime):
+        if val.tzinfo is None:
+            val = val.replace(tzinfo=timezone.utc)
+        return val.astimezone(tz).strftime("%I:%M %p")
+    if hasattr(val, "strftime"):
+        return val.strftime("%I:%M %p")
+    s = str(val).strip()
+    if not s or s == "None" or s == "--":
+        return "--"
+    if "T" in s or s.endswith("Z"):
+        try:
+            iso_s = s.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(iso_s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(tz).strftime("%I:%M %p")
+        except Exception:
+            return s
+    return s
+
+
 def calculate_haversine_distance_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """
     Calculate great-circle distance between two GPS coordinates in meters
@@ -432,3 +458,183 @@ def upload_to_firebase_storage(
 
     local_url = f"/api/attendance/{attendance_record_id}/photo/{photo_type}"
     return canonical_path, local_url
+
+
+def get_daily_attendance_metrics(target_date: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Compute authoritative live daily attendance breakdown:
+    - totalPresent: total unique employees present
+    - wfo: total WFO employees
+    - wfh: total WFH employees
+    - late: total late logins
+    - records: deduplicated daily attendance records formatted for dashboard
+    Queries live Cloud Firestore subcollections (attendance/{uid}/records/{date}),
+    collection_group records, and top-level attendance.
+    """
+    if not target_date:
+        target_date = get_attendance_today().isoformat()
+
+    target_date_iso = str(target_date).strip()
+
+    from app.services.firestore_service import FirestoreService
+
+    all_emps = FirestoreService.list_all("employees")
+    emp_map = {}
+    for e in all_emps:
+        uid = e.get("uid") or e.get("id")
+        code = e.get("employeeId") or e.get("employee_id") or uid
+        if uid:
+            emp_map[str(uid)] = e
+        if code:
+            emp_map[str(code)] = e
+        if e.get("email"):
+            emp_map[str(e["email"]).lower().strip()] = e
+
+    merged_by_emp = {}
+
+    # 1. Query collection group records for target date
+    cg_records = FirestoreService.collection_group("records", [("date", "==", target_date_iso)])
+    for cr in cg_records:
+        eid = str(cr.get("employeeId") or cr.get("employee_id") or cr.get("uid") or "")
+        emp = emp_map.get(eid) or emp_map.get(str(cr.get("email", "")).lower().strip()) or {}
+        code = emp.get("employeeId") or emp.get("employee_id") or eid
+        if code:
+            merged_by_emp[str(code)] = dict(cr)
+            if eid:
+                merged_by_emp[str(eid)] = dict(cr)
+
+    # 2. Query top-level attendance records for target date
+    top_records = FirestoreService.query("attendance", {"date": target_date_iso})
+    for tr in top_records:
+        eid = str(tr.get("employee_id") or tr.get("employeeId") or tr.get("employee_uid") or "")
+        emp = emp_map.get(eid) or emp_map.get(str(tr.get("email", "")).lower().strip()) or {}
+        code = emp.get("employeeId") or emp.get("employee_id") or eid
+        if code:
+            if str(code) in merged_by_emp:
+                merged_by_emp[str(code)].update(tr)
+            else:
+                merged_by_emp[str(code)] = dict(tr)
+
+    # 3. Fetch real-time live attendance punches from Cloud Firestore for all active employees
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        from app.services.firestore_rest import fetch_live_subdocument
+
+        def _fetch_emp(emp):
+            u = emp.get("uid") or emp.get("id")
+            if not u:
+                return None
+            rec = fetch_live_subdocument("attendance", str(u), "records", target_date_iso)
+            return (str(u), rec, emp)
+
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            fetched_items = list(ex.map(_fetch_emp, all_emps))
+
+        for item in fetched_items:
+            if not item:
+                continue
+            u_id, live_rec, emp_obj = item
+            if live_rec and (live_rec.get("checkIn") or live_rec.get("status") or live_rec.get("date") == target_date_iso):
+                code = emp_obj.get("employeeId") or emp_obj.get("employee_id") or u_id
+                emp_name = emp_obj.get("name") or emp_obj.get("fullName") or "Employee"
+                emp_dept = emp_obj.get("department") or "Operations"
+                cin_val = live_rec.get("checkIn") or live_rec.get("check_in_time")
+                cout_val = live_rec.get("checkOut") or live_rec.get("check_out_time")
+                w_mode = str(live_rec.get("workMode") or live_rec.get("work_mode") or "WFO").upper()
+                st = str(live_rec.get("status") or ("Completed" if cout_val and cout_val != "--" else "Present"))
+                late_reason_val = (
+                    live_rec.get("lateReason")
+                    or live_rec.get("late_reason")
+                    or live_rec.get("lateLoginReason")
+                    or live_rec.get("late_login_reason")
+                    or live_rec.get("reason")
+                    or live_rec.get("lateReasonText")
+                )
+                is_lt = bool(live_rec.get("lateLogin") or live_rec.get("is_late") or bool(late_reason_val))
+                late_status_val = "SUBMITTED" if late_reason_val else ("PENDING" if is_lt else "NOT_REQUIRED")
+
+                norm = {
+                    "id": f"{code}_{target_date_iso}",
+                    "employee_id": code,
+                    "employeeId": code,
+                    "employee_uid": u_id,
+                    "employeeName": emp_name,
+                    "name": emp_name,
+                    "department": emp_dept,
+                    "date": target_date_iso,
+                    "check_in_time": parse_time_display(cin_val),
+                    "check_out_time": parse_time_display(cout_val) if cout_val else None,
+                    "check_in_timestamp": cin_val,
+                    "check_out_timestamp": cout_val,
+                    "work_mode": w_mode,
+                    "workMode": w_mode,
+                    "status": st,
+                    "is_late": is_lt,
+                    "lateLogin": is_lt,
+                    "lateReason": late_reason_val,
+                    "late_reason": late_reason_val,
+                    "lateReasonStatus": late_status_val,
+                    "late_reason_status": late_status_val,
+                    "lateReasonSubmittedAt": live_rec.get("lateReasonSubmittedAt") or live_rec.get("late_reason_submitted_at") or (cin_val if late_reason_val else None),
+                    "check_in_photo_url": live_rec.get("checkInPhotoUrl"),
+                    "duration": live_rec.get("duration") or "--",
+                    "sync_channel": live_rec.get("sync_channel") or "web_portal_synced",
+                    "sync_source": live_rec.get("sync_source") or "web_portal",
+                }
+                merged_by_emp[str(code)] = norm
+                merged_by_emp[str(u_id)] = norm
+
+                # Cache in local attendance collection
+                try:
+                    FirestoreService.save("attendance", f"{code}_{target_date_iso}", norm)
+                except Exception:
+                    pass
+    except Exception as live_err:
+        logger.debug(f"Live daily attendance metrics fetch: {live_err}")
+
+    # Deduplicate strictly by employee code
+    unique_records = {}
+    for k, r in merged_by_emp.items():
+        emp = emp_map.get(k) or emp_map.get(str(r.get("email", "")).lower().strip()) or {}
+        code = emp.get("employeeId") or emp.get("employee_id") or r.get("employee_id") or r.get("employeeId") or k
+        if str(code) not in unique_records:
+            name = emp.get("name") or emp.get("fullName") or r.get("employeeName") or r.get("name") or "Employee"
+            dept = emp.get("department") or r.get("department") or "Operations"
+            r_copy = dict(r)
+            r_copy["employee_id"] = str(code)
+            r_copy["employeeId"] = str(code)
+            r_copy["employeeName"] = name
+            r_copy["department"] = dept
+            unique_records[str(code)] = r_copy
+
+    daily_list = list(unique_records.values())
+
+    total_present = 0
+    wfo_count = 0
+    wfh_count = 0
+    late_count = 0
+
+    for r in daily_list:
+        st = str(r.get("status", "")).strip().capitalize()
+        cin = r.get("check_in_time") or r.get("checkIn") or r.get("check_in_timestamp")
+        is_present = (st in ["Present", "Late", "Completed"]) or bool(cin and str(cin) != "--")
+        if is_present:
+            total_present += 1
+            w_mode = str(r.get("work_mode") or r.get("workMode") or "WFO").strip().upper()
+            if w_mode == "WFH":
+                wfh_count += 1
+            else:
+                wfo_count += 1
+
+            is_lt = bool(r.get("is_late") or r.get("lateLogin") or st == "Late")
+            if is_lt:
+                late_count += 1
+
+    return {
+        "date": target_date_iso,
+        "totalPresent": total_present,
+        "wfo": wfo_count,
+        "wfh": wfh_count,
+        "late": late_count,
+        "records": daily_list,
+    }

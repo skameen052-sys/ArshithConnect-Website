@@ -166,6 +166,7 @@ export default function AdminAttendance() {
                   <th>Work Mode</th>
                   <th>Check-In</th>
                   <th>Check-Out</th>
+                  <th>Duration</th>
                   <th>Status</th>
                   <th>Actions</th>
                 </tr>
@@ -203,6 +204,7 @@ export default function AdminAttendance() {
                       </td>
                       <td style={{ fontWeight: '600' }}>{rec.checkIn}</td>
                       <td style={{ color: '#64748b' }}>{rec.checkOut}</td>
+                      <td style={{ fontWeight: '600', color: '#0f766e' }}>{rec.duration || '--'}</td>
                       <td>
                         {rec.isLate || (rec.status || '').toUpperCase() === 'LATE' ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', alignItems: 'flex-start' }}>

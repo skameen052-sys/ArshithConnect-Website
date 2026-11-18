@@ -1,33 +1,50 @@
 import axios from 'axios';
+import {
+  getApiBaseUrl,
+  handleExpiredSession,
+  isJwtExpired,
+  refreshAuthTokenIfPossible,
+} from '../utils/authSession';
+
+const PUBLIC_AUTH_PATHS = [
+  '/api/auth/login',
+  '/api/auth/admin-login',
+  '/api/auth/hr-login',
+  '/api/auth/register',
+  '/api/auth/refresh',
+  '/api/teamlead/login',
+  '/api/teamlead/register',
+];
+
+const isPublicAuthRequest = (url = '') =>
+  PUBLIC_AUTH_PATHS.some((path) => String(url).includes(path));
 
 /**
  * Arshith Connect - API Service
- * Configured Axios instance ready for future FastAPI backend integration.
+ * Configured Axios instance ready for FastAPI backend integration.
  */
-// Determine base URL dynamically:
-// 1. In browser when served from FastAPI (e.g. port 8000 or production host), use relative '' for zero CORS & origin issues.
-// 2. In Vite dev server (e.g. port 5173), Vite proxies /api to port 8000 seamlessly.
-const getApiBaseUrl = () => {
-  if (typeof window !== 'undefined') {
-    if (window.location.port === '8000' || !window.location.port) {
-      return '';
-    }
-  }
-  return import.meta.env.VITE_API_BASE_URL || '';
-};
-
 const api = axios.create({
   baseURL: getApiBaseUrl(),
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 10000,
+  timeout: 30000,
 });
 
-// Request Interceptor: Attach Auth Token if present and handle FormData boundary
+// Request Interceptor: Attach Auth Token (refreshing expired JWTs proactively) and handle FormData boundary
 api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('arshith_auth_token');
+  async (config) => {
+    let token = localStorage.getItem('arshith_auth_token');
+    if (token && !isPublicAuthRequest(config.url) && isJwtExpired(token)) {
+      const refreshed = await refreshAuthTokenIfPossible();
+      if (refreshed) {
+        token = refreshed;
+      } else {
+        handleExpiredSession();
+        return Promise.reject(new axios.Cancel('Session expired. Please log in again.'));
+      }
+    }
+
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -41,13 +58,26 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Response Interceptor: Uniform error handling
+// Response Interceptor: Transparently refresh expired tokens once on 401 or clear stale session
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response && error.response.status === 401) {
-      // Optional: Redirect to login or dispatch session timeout
-      console.warn('API returned 401 Unauthorized.');
+  async (error) => {
+    const originalConfig = error.config;
+    if (
+      error.response &&
+      error.response.status === 401 &&
+      originalConfig &&
+      !originalConfig._retried &&
+      !isPublicAuthRequest(originalConfig.url)
+    ) {
+      originalConfig._retried = true;
+      const refreshed = await refreshAuthTokenIfPossible();
+      if (refreshed) {
+        originalConfig.headers = originalConfig.headers || {};
+        originalConfig.headers.Authorization = `Bearer ${refreshed}`;
+        return api(originalConfig);
+      }
+      handleExpiredSession();
     }
     return Promise.reject(error);
   }

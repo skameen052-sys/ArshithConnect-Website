@@ -154,7 +154,7 @@ export default function AdminPerformance() {
         <div style={{ borderBottom: '2px solid #134e4a', paddingBottom: '0.5rem', marginBottom: '-0.5rem', color: '#134e4a', fontWeight: '700', fontSize: '1rem' }}>
           Appraisal Reviews ({reviews.length})
         </div>
-        <div className="hrms-search-input-wrap" style={{ minWidth: '260px' }}>
+        <div className="hrms-search-input-wrap" style={{ minWidth: 'min(100%, 260px)' }}>
           <Search size={16} />
           <input
             type="text"

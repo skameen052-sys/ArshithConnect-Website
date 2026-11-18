@@ -355,3 +355,173 @@ def test_modified_frontend_role_or_payload_no_privilege_escalation():
         headers={"Authorization": f"Bearer {forged_admin_token}"},
     )
     assert tampered_admin_req.status_code in (401, 403)
+
+
+def test_expired_hs256_token_skips_firebase_kid_warning(caplog):
+    """Expired local HS256 JWTs must return 401 without triggering Firebase 'kid' warnings."""
+    import base64
+    import json
+    from datetime import timedelta
+    from app.core.security import create_access_token, is_firebase_id_token_format
+
+    expired_token = create_access_token(
+        subject="AFI-9073",
+        role="employee",
+        expires_delta=timedelta(seconds=-10),
+    )
+
+    # Local HS256 JWTs do not have a "kid" header claim and must not look like Firebase ID tokens
+    assert is_firebase_id_token_format(expired_token) is False
+
+    fake_firebase_header = base64.urlsafe_b64encode(
+        json.dumps({"alg": "RS256", "kid": "abc123", "typ": "JWT"}).encode("utf-8")
+    ).rstrip(b"=").decode("ascii")
+    assert is_firebase_id_token_format(f"{fake_firebase_header}.e30.c2ln") is True
+
+    with caplog.at_level("WARNING"):
+        res = client.get(
+            "/api/chat/unread-count",
+            headers={"Authorization": f"Bearer {expired_token}"},
+        )
+
+    assert res.status_code == 401
+    assert "expired" in res.json().get("detail", "").lower()
+    assert 'Firebase ID token has no "kid" claim.' not in caplog.text
+
+    refresh_res = client.post(
+        "/api/auth/refresh",
+        json={"firebase_token": expired_token},
+    )
+    assert refresh_res.status_code == 401
+
+
+def test_team_leader_login_alias_and_get_current_user_resolution(monkeypatch):
+    """Approved Team Leaders can log in across domain aliases and call protected /api/teamlead routes."""
+    from app.core.security import get_password_hash
+    from app.services.firestore_service import FirestoreService, firestore_service
+
+    store = {
+        "team_leaders": [
+            {
+                "id": "7856",
+                "team_leader_id": "7856",
+                "full_name": "rajesh",
+                "name": "rajesh",
+                "email": "rajesh@leadarshith.com",
+                "hashed_password": get_password_hash("TeamLead@123"),
+                "role": "team_leader",
+                "approval_status": "APPROVED",
+                "is_active": True,
+                "department": "Operations",
+            },
+            {
+                "id": "8521",
+                "team_leader_id": "8521",
+                "full_name": "dinesh",
+                "name": "dinesh",
+                "email": "dinesh@leadarshith.com",
+                "hashed_password": get_password_hash("TeamLead@123"),
+                "role": "team_leader",
+                "approval_status": "PENDING",
+                "is_active": False,
+            },
+        ],
+        "users": [],
+        "admins": [],
+        "employees": [],
+        "projects": [
+            {
+                "id": "PRJ-412119",
+                "name": "facial solutions",
+                "team_leader": "rajesh",
+                "team_leader_id": "7856",
+                "team_leader_email": "rajesh@leadarshith.com",
+                "team_leader_approval_status": "APPROVED",
+            }
+        ],
+        "project_tasks": [],
+    }
+
+    def _list_all(entity):
+        col = FirestoreService.get_collection_name(entity)
+        return [dict(d) for d in store.get(col, [])]
+
+    def _query(entity, filters):
+        res = []
+        for item in _list_all(entity):
+            ok = True
+            for k, v in filters.items():
+                if v is None:
+                    continue
+                iv = item.get(k)
+                if isinstance(iv, str) and isinstance(v, str):
+                    if iv.lower().strip() != v.lower().strip():
+                        ok = False
+                        break
+                elif iv != v:
+                    ok = False
+                    break
+            if ok:
+                res.append(item)
+        return res
+
+    def _get_by_id(entity, doc_id):
+        col = FirestoreService.get_collection_name(entity)
+        for item in store.get(col, []):
+            if str(item.get("id")) == str(doc_id) or str(item.get("email", "")).lower() == str(doc_id).lower():
+                return dict(item)
+        return None
+
+    def _save(entity, doc_id, data):
+        col = FirestoreService.get_collection_name(entity)
+        bucket = store.setdefault(col, [])
+        for i, item in enumerate(bucket):
+            if str(item.get("id")) == str(doc_id):
+                bucket[i] = {**item, **data}
+                return bucket[i]
+        bucket.append(dict(data))
+        return data
+
+    monkeypatch.setattr(FirestoreService, "list_all", classmethod(lambda cls, e: _list_all(e)))
+    monkeypatch.setattr(FirestoreService, "query", classmethod(lambda cls, e, f: _query(e, f)))
+    monkeypatch.setattr(FirestoreService, "get_by_id", classmethod(lambda cls, e, d: _get_by_id(e, d)))
+    monkeypatch.setattr(FirestoreService, "save", classmethod(lambda cls, e, d, data: _save(e, d, data)))
+    monkeypatch.setattr(firestore_service, "list_documents", lambda c, filters=None: _query(c, {f[0]: f[2] for f in filters if len(f) == 3 and f[1] == "=="}) if filters else _list_all(c))
+    monkeypatch.setattr(firestore_service, "get_document", lambda c, d: _get_by_id(c, d))
+
+    # 1. Approved leader can log in using @teamlead.com domain alias
+    login_res = client.post(
+        "/api/teamlead/login",
+        json={"email": "rajesh@teamlead.com", "password": "TeamLead@123"},
+    )
+    assert login_res.status_code == 200
+    body = login_res.json()
+    assert body["role"] == "team_leader"
+    assert body["user"]["email"] == "rajesh@leadarshith.com"
+    assert body["user"]["team_leader_id"] == "7856"
+    token = body["access_token"]
+
+    # 2. Protected Team Leader route resolves identity even if only in team_leaders collection
+    store["users"] = []
+    proj_res = client.get(
+        "/api/teamlead/projects",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert proj_res.status_code == 200
+    assert any(p["id"] == "PRJ-412119" for p in proj_res.json())
+
+    # 3. Pending leader is gated with 403
+    pending_res = client.post(
+        "/api/teamlead/login",
+        json={"email": "dinesh@leadarshith.com", "password": "TeamLead@123"},
+    )
+    assert pending_res.status_code == 403
+
+    # 4. Nonexistent email returns 401
+    missing_res = client.post(
+        "/api/teamlead/login",
+        json={"email": "unknown_leader@teamlead.com", "password": "TeamLead@123"},
+    )
+    assert missing_res.status_code == 401
+
+

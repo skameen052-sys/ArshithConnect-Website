@@ -7,11 +7,37 @@ import api from './api';
 
 // WebSocket instance and event listeners
 let socket = null;
+let socketToken = null;
 let reconnectTimer = null;
+let pingTimer = null;
+let isUnloading = false;
 const listeners = new Set();
 
-const WS_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000')
-  .replace(/^http/, 'ws');
+const getWsBaseUrl = () => {
+  if (typeof window !== 'undefined') {
+    const loc = window.location;
+    const proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+    if (loc.port === '5173' || loc.port === '3000' || loc.port === '8000' || !loc.port) {
+      return `${proto}//${loc.host}`;
+    }
+  }
+  const envUrl = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+  return envUrl.replace(/^http/, 'ws');
+};
+
+const WS_BASE_URL = getWsBaseUrl();
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('arshith:session-expired', () => {
+    chatService.disconnectWebSocket();
+  });
+  const handlePageUnload = () => {
+    isUnloading = true;
+    chatService.disconnectWebSocket();
+  };
+  window.addEventListener('beforeunload', handlePageUnload);
+  window.addEventListener('pagehide', handlePageUnload);
+}
 
 export const chatService = {
   // ============================================================================
@@ -127,6 +153,16 @@ export const chatService = {
   },
 
   /**
+   * Ensure a direct 1:1 conversation exists on backend + mobile Firestore
+   */
+  async ensureDirectConversation(targetId) {
+    const res = await api.post('/api/chat/conversations/direct', {
+      target_id: targetId,
+    });
+    return res.data;
+  },
+
+  /**
    * Create a new team group channel
    */
   async createGroup({ name, description = '', memberIds = [] }) {
@@ -134,6 +170,17 @@ export const chatService = {
       name,
       description,
       member_ids: memberIds,
+    });
+    return res.data;
+  },
+
+  /**
+   * Update group name or description
+   */
+  async updateGroup(groupId, { name, description } = {}) {
+    const res = await api.patch(`/api/chat/conversations/${groupId}`, {
+      ...(name !== undefined ? { name } : {}),
+      ...(description !== undefined ? { description } : {}),
     });
     return res.data;
   },
@@ -157,6 +204,14 @@ export const chatService = {
   },
 
   /**
+   * Permanently delete a group channel across website and mobile app
+   */
+  async deleteGroup(groupId) {
+    const res = await api.delete(`/api/chat/conversations/${encodeURIComponent(groupId)}`);
+    return res.data;
+  },
+
+  /**
    * Mark all messages in a conversation as read
    */
   async markRead(chatType, targetId, conversationId = null) {
@@ -172,10 +227,60 @@ export const chatService = {
   },
 
   /**
+   * Update per-user conversation preferences (pin chat, mute chat)
+   */
+  async updateConversationSettings({ conversationId, chatType, targetId, pinned, muted }) {
+    const payload = {
+      conversation_id: conversationId,
+      chat_type: chatType,
+      target_id: targetId,
+    };
+    if (pinned !== undefined) payload.pinned = Boolean(pinned);
+    if (muted !== undefined) payload.muted = Boolean(muted);
+    const res = await api.post('/api/chat/conversations/settings', payload);
+    return res.data;
+  },
+
+  /**
+   * Clear chat history for the current user only
+   */
+  async clearConversation({ conversationId, chatType, targetId }) {
+    const res = await api.post('/api/chat/conversations/clear', {
+      conversation_id: conversationId,
+      chat_type: chatType,
+      target_id: targetId,
+    });
+    return res.data;
+  },
+
+  /**
+   * WhatsApp-style "Delete for Me": deletes conversation from user's inbox only
+   */
+  async deleteConversationForMe({ conversationId, chatType, targetId }) {
+    const res = await api.post('/api/chat/conversations/delete-for-me', {
+      conversation_id: conversationId,
+      chat_type: chatType,
+      target_id: targetId,
+    });
+    return res.data;
+  },
+
+  /**
+   * Fast live presence snapshot (online, last_seen, typing)
+   */
+  async getPresence() {
+    const res = await api.get('/api/chat/presence');
+    return res.data;
+  },
+
+  /**
    * Fast check for total unread chat messages for application navbar badges
    */
   async getUnreadCount() {
     try {
+      const token = localStorage.getItem('arshith_auth_token');
+      if (!token) return 0;
+      chatService.connectWebSocket();
       const res = await api.get('/api/chat/unread-count');
       return res.data.total_unread || 0;
     } catch {
@@ -195,27 +300,60 @@ export const chatService = {
       listeners.add(onEvent);
     }
 
-    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+    const token = localStorage.getItem('arshith_auth_token') || '';
+    if (!token) {
       return () => {
         if (onEvent) listeners.delete(onEvent);
       };
     }
 
-    const token = localStorage.getItem('arshith_auth_token') || '';
+    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+      if (socketToken === token) {
+        return () => {
+          if (onEvent) listeners.delete(onEvent);
+        };
+      }
+      // Token switched (e.g., another user logged in): cleanly close previous socket first
+      const prevSocket = socket;
+      socket = null;
+      socketToken = null;
+      prevSocket.onclose = null;
+      try {
+        prevSocket.close();
+      } catch {
+        // ignore
+      }
+    }
+
+    isUnloading = false;
+    socketToken = token;
     const wsUrl = `${WS_BASE_URL}/api/chat/ws?token=${encodeURIComponent(token)}`;
 
     try {
-      socket = new WebSocket(wsUrl);
+      const nextSocket = new WebSocket(wsUrl);
+      socket = nextSocket;
 
-      socket.onopen = () => {
-        // Send a ping to keep connection warm
+      nextSocket.onopen = () => {
+        // Send a ping to keep connection warm & refresh presence
         if (reconnectTimer) {
           clearTimeout(reconnectTimer);
           reconnectTimer = null;
         }
+        if (pingTimer) {
+          clearInterval(pingTimer);
+        }
+        pingTimer = setInterval(() => {
+          if (nextSocket && nextSocket.readyState === WebSocket.OPEN) {
+            try {
+              nextSocket.send(JSON.stringify({ action: 'ping' }));
+            } catch {
+              // ignore
+            }
+          }
+        }, 25000);
       };
 
-      socket.onmessage = (event) => {
+      nextSocket.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
           listeners.forEach((listener) => {
@@ -230,17 +368,24 @@ export const chatService = {
         }
       };
 
-      socket.onclose = () => {
-        socket = null;
-        // Auto-reconnect after 4 seconds if token still exists
-        if (localStorage.getItem('arshith_auth_token')) {
+      nextSocket.onclose = () => {
+        if (socket === nextSocket) {
+          socket = null;
+          socketToken = null;
+        }
+        if (pingTimer) {
+          clearInterval(pingTimer);
+          pingTimer = null;
+        }
+        // Auto-reconnect after 4 seconds if token still exists and page is not unloading
+        if (!isUnloading && localStorage.getItem('arshith_auth_token')) {
           reconnectTimer = setTimeout(() => {
             chatService.connectWebSocket();
           }, 4000);
         }
       };
 
-      socket.onerror = (err) => {
+      nextSocket.onerror = (err) => {
         console.debug('Chat WebSocket error:', err);
       };
     } catch (e) {
@@ -252,6 +397,31 @@ export const chatService = {
         listeners.delete(onEvent);
       }
     };
+  },
+
+  /**
+   * Close WebSocket connection and stop reconnection attempts
+   */
+  disconnectWebSocket() {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    if (pingTimer) {
+      clearInterval(pingTimer);
+      pingTimer = null;
+    }
+    if (socket) {
+      const prevSocket = socket;
+      socket = null;
+      socketToken = null;
+      prevSocket.onclose = null;
+      try {
+        prevSocket.close();
+      } catch {
+        // ignore
+      }
+    }
   },
 
   /**

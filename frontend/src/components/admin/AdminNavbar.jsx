@@ -3,14 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { LogOut, MessageSquare } from 'lucide-react';
 import BrandLogo from '../common/BrandLogo';
 import { chatService } from '../../services/chatService';
+import authService from '../../services/authService';
 
 export default function AdminNavbar({ onToggleSidebar }) {
   const navigate = useNavigate();
   const [unreadCount, setUnreadCount] = useState(0);
 
   const handleLogout = useCallback(() => {
-    localStorage.removeItem('arshith_role');
-    localStorage.removeItem('arshith_user');
+    authService.logout();
     navigate('/admin/login');
   }, [navigate]);
 
@@ -37,8 +37,10 @@ export default function AdminNavbar({ onToggleSidebar }) {
       return null;
     }
   })();
+  const [imgError, setImgError] = useState(false);
   const adminName = storedUser?.name || 'Administrator';
   const adminEmail = storedUser?.email || 'admin@arshith.com';
+  const adminPhoto = storedUser?.photoUrl || storedUser?.profile_photo || storedUser?.profilePhoto || storedUser?.avatar || '';
 
   return (
     <header className="portal-navbar">
@@ -82,8 +84,12 @@ export default function AdminNavbar({ onToggleSidebar }) {
         </button>
 
         <div className="user-profile-badge" title={`${adminName} (${adminEmail})`}>
-          <div className="user-avatar" style={{ backgroundColor: '#0b3d2b' }}>
-            {adminName.charAt(0).toUpperCase()}
+          <div className="user-avatar" style={{ backgroundColor: '#0b3d2b', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {adminPhoto && !imgError ? (
+              <img src={adminPhoto} alt={adminName} onError={() => setImgError(true)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              adminName.charAt(0).toUpperCase()
+            )}
           </div>
           <div className="user-info-text">
             <div className="user-name">{adminName}</div>

@@ -122,6 +122,42 @@ export const workUpdateService = {
       throw new Error(error.response?.data?.detail || error.response?.data?.message || 'Failed to delete work schedule');
     }
   },
+
+  /**
+   * Tier 1: Retrieve summary of all employees with their work updates count and latest update date
+   */
+  async getEmployeesSummary() {
+    try {
+      const response = await api.get('/api/work-updates/employees-summary');
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.detail || error.response?.data?.message || 'Could not fetch employee work updates summary');
+    }
+  },
+
+  /**
+   * Tier 2: Retrieve daily work history dates for a given employee
+   */
+  async getEmployeeHistory(employeeId) {
+    try {
+      const response = await api.get(`/api/work-updates/employee/${encodeURIComponent(employeeId)}/history`);
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.detail || error.response?.data?.message || 'Could not fetch employee work history');
+    }
+  },
+
+  /**
+   * Tier 3: Retrieve individual sections and work updates for a specific employee on a specific date
+   */
+  async getEmployeeDayUpdates(employeeId, dateStr) {
+    try {
+      const response = await api.get(`/api/work-updates/employee/${encodeURIComponent(employeeId)}/date/${encodeURIComponent(dateStr)}`);
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.detail || error.response?.data?.message || 'Could not fetch day work updates');
+    }
+  },
 };
 
 export default workUpdateService;

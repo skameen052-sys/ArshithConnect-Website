@@ -162,6 +162,21 @@ export default function EmployeeAttendance() {
                     <span className={`badge-status ${row.status === 'Present' ? 'badge-present' : 'badge-late'}`}>
                       {row.status}
                     </span>
+                    {(row.lateReason || row.late_reason) && (
+                      <div
+                        style={{
+                          fontSize: '0.72rem',
+                          color: '#b45309',
+                          marginTop: '3px',
+                          maxWidth: '220px',
+                          wordBreak: 'break-word',
+                          lineHeight: '1.2',
+                        }}
+                        title={`Late Reason: ${row.lateReason || row.late_reason}`}
+                      >
+                        "{row.lateReason || row.late_reason}"
+                      </div>
+                    )}
                   </td>
                   <td>
                     {row.hasCheckInPhoto && row.id ? (

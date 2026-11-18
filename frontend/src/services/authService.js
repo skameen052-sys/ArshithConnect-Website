@@ -1,4 +1,5 @@
 import api from './api';
+import { chatService } from './chatService';
 
 /**
  * AuthService - Handles Employee & Admin Authentication
@@ -199,10 +200,20 @@ export const authService = {
    * Log out session
    */
   logout() {
-    try {
-      api.post('/api/auth/logout').catch(() => {});
-    } catch {
-      // Ignored
+    const token = localStorage.getItem('arshith_auth_token');
+    chatService.disconnectWebSocket();
+    if (token) {
+      try {
+        api
+          .post(
+            '/api/auth/logout',
+            {},
+            { headers: { Authorization: `Bearer ${token}` } }
+          )
+          .catch(() => {});
+      } catch {
+        // Ignored
+      }
     }
     localStorage.removeItem('arshith_role');
     localStorage.removeItem('arshith_user');

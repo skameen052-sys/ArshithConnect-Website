@@ -94,7 +94,7 @@ export default function AdminSettings() {
       )}
 
       <form onSubmit={handleSubmit}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '1.5rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))', gap: '1.5rem' }}>
           {/* Company Profile Card */}
           <div className="hrms-card" style={{ marginBottom: 0 }}>
             <div className="hrms-card-header">
@@ -168,7 +168,7 @@ export default function AdminSettings() {
                 </span>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 140px), 1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
                 <div style={{ padding: '0.75rem', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                   <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#0f766e', textTransform: 'uppercase' }}>Weekly Offs</div>
                   <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1e293b', marginTop: '0.2rem' }}>4 Sundays (Paid)</div>

@@ -7,9 +7,11 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.firebase import get_firestore_client, is_firebase_live
 from app.db.session import get_db, SessionLocal
 from app.dependencies.auth import get_current_user, get_current_admin
+from app.services.chat_sync_service import resolve_auth_uid, _is_looks_like_uid
 from app.services.firestore_service import firestore_service
 from app.schemas.work_update import (
     WorkScheduleBase,
@@ -26,11 +28,11 @@ schedules_router = APIRouter(prefix="/work-schedules", tags=["Work Schedules"])
 
 IST = ZoneInfo("Asia/Kolkata")
 
-# Canonical default schedules (in case database has not yet been seeded)
+# Canonical default schedules matching mobile screenshot 4
 DEFAULT_SCHEDULES = [
     {
         "schedule_id": "SCH-01",
-        "name": "Work Update 01",
+        "name": "Morning Work Update",
         "section": 1,
         "work_start": "09:30",
         "work_end": "11:00",
@@ -48,7 +50,7 @@ DEFAULT_SCHEDULES = [
     },
     {
         "schedule_id": "SCH-02",
-        "name": "Work Update 02",
+        "name": "Midday Work Update",
         "section": 2,
         "work_start": "11:15",
         "work_end": "13:00",
@@ -66,7 +68,7 @@ DEFAULT_SCHEDULES = [
     },
     {
         "schedule_id": "SCH-03",
-        "name": "Work Update 03",
+        "name": "Afternoon Work Update",
         "section": 3,
         "work_start": "14:00",
         "work_end": "16:00",
@@ -84,7 +86,7 @@ DEFAULT_SCHEDULES = [
     },
     {
         "schedule_id": "SCH-04",
-        "name": "Work Update 04",
+        "name": "Evening Work Update",
         "section": 4,
         "work_start": "16:15",
         "work_end": "18:00",
@@ -148,39 +150,88 @@ def get_all_schedules_from_db() -> List[dict]:
     return schedules
 
 
-def resolve_employee_info(current_user) -> dict:
-    """Resolve authoritative employee details for current authenticated session."""
-    user_id = str(getattr(current_user, "id", "") or getattr(current_user, "uid", ""))
-    email = str(getattr(current_user, "email", "")).strip().lower()
-    name = getattr(current_user, "full_name", None) or getattr(current_user, "name", None) or ""
-    emp_id = getattr(current_user, "employee_id", None) or getattr(current_user, "employeeId", None) or ""
+def _run_pg_sync(db: Optional[Session], action_label: str, fn) -> None:
+    """Execute optional PostgreSQL sync only when SQLAlchemy session is active."""
+    if db is None:
+        return
+    try:
+        fn(db)
+        db.commit()
+    except Exception as pg_err:
+        logger.warning(f"PostgreSQL {action_label} skipped: {pg_err}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
-    # Check Firestore employees if missing name or emp_id
-    if (not name or not emp_id) and email:
+
+def _collect_employee_keys(emp_doc: dict) -> List[str]:
+    """Collect all distinct lowercase identifiers for an employee record."""
+    keys = []
+    for k in (emp_doc.get("uid"), emp_doc.get("id"), emp_doc.get("employee_id"), emp_doc.get("employeeId"), emp_doc.get("email")):
+        if k:
+            val = str(k).strip().lower()
+            if val and val not in keys:
+                keys.append(val)
+    return keys
+
+
+def resolve_employee_info(current_user) -> dict:
+    """
+    Resolve authoritative employee details for current authenticated session.
+    Prioritizes Firebase Auth UID so Web and Android App read/write the exact same
+    `workUpdates/{uid}/dailyUpdates` path.
+    """
+    raw_uid = str(getattr(current_user, "uid", "") or "").strip()
+    raw_id = str(getattr(current_user, "id", "") or "").strip()
+    email = str(getattr(current_user, "email", "") or "").strip().lower()
+    name = getattr(current_user, "full_name", None) or getattr(current_user, "name", None) or ""
+    emp_id = str(getattr(current_user, "employee_id", None) or getattr(current_user, "employeeId", None) or "").strip()
+
+    auth_uid = ""
+    for candidate in (raw_uid, email, raw_id, emp_id):
+        if candidate:
+            resolved = resolve_auth_uid(candidate)
+            if resolved and _is_looks_like_uid(resolved):
+                auth_uid = resolved
+                break
+
+    # Check Firestore employees if missing auth_uid, name, or emp_id
+    if email and (not auth_uid or not name or not emp_id):
         matches = firestore_service.list_documents("employees", [("email", "==", email)])
         if matches:
             e = matches[0]
+            doc_uid = str(e.get("uid") or e.get("id") or "").strip()
+            if not auth_uid and doc_uid:
+                auth_uid = doc_uid
             name = name or e.get("full_name") or e.get("name") or e.get("employeeName") or ""
-            emp_id = emp_id or e.get("employee_id") or e.get("employeeId") or ""
+            emp_id = emp_id or str(e.get("employee_id") or e.get("employeeId") or "").strip()
 
+    uid = auth_uid or raw_uid or raw_id
     if not name:
         name = email.split("@")[0].capitalize() if email else "Employee"
 
+    candidate_uids = []
+    for candidate in (uid, raw_uid, raw_id, emp_id):
+        if candidate and candidate not in candidate_uids:
+            candidate_uids.append(candidate)
+
     return {
-        "uid": user_id,
+        "uid": uid,
         "email": email,
         "name": name,
-        "employee_id": emp_id or user_id,
+        "employee_id": emp_id or uid,
+        "candidate_uids": candidate_uids,
     }
 
 
 def calculate_availability(schedule: dict, current_minutes: int, has_submitted: bool) -> dict:
     """
-    Calculate schedule status and button state matching mobile reference screenshots:
-    A. Submitted: 'Work update submitted for today', button 'ALREADY SUBMITTED'
-    B. Open: 'Update is available now • {window}', button 'SUBMIT WORK UPDATE'
-    C. Upcoming: 'Available from {window_start}', button 'NOT AVAILABLE'
-    D. Closed: 'Update window closed', button 'NOT AVAILABLE'
+    Calculate schedule status, badge variant and button lock state matching mobile reference screenshot:
+    A. Submitted: badge 'Submitted' (green), button 'View ›'
+    B. Open: badge 'Open Now' (emerald), button 'Submit' (unlocked)
+    C. Upcoming: badge 'Opens {time}' (amber), button '🔒 Submit'
+    D. Closed: badge 'Window closed' (gray), button '🔒 Submit'
     """
     w_start = time_to_minutes(schedule.get("window_start", ""))
     w_end = time_to_minutes(schedule.get("window_end", ""))
@@ -190,50 +241,99 @@ def calculate_availability(schedule: dict, current_minutes: int, has_submitted: 
     if has_submitted:
         return {
             "status": "submitted",
+            "badge_text": "Submitted",
+            "badge_variant": "submitted",
             "status_text": "Work update submitted for today",
-            "button_text": "ALREADY SUBMITTED",
+            "button_text": "View ›",
             "is_open": False,
             "can_submit": False,
+            "is_locked": False,
         }
 
     if not schedule.get("is_active", True):
         return {
             "status": "inactive",
+            "badge_text": "Inactive",
+            "badge_variant": "closed",
             "status_text": "Schedule is currently inactive",
-            "button_text": "NOT AVAILABLE",
+            "button_text": "Submit",
             "is_open": False,
             "can_submit": False,
+            "is_locked": True,
         }
 
     if current_minutes < w_start:
         return {
             "status": "upcoming",
+            "badge_text": f"Opens {w_start_disp}",
+            "badge_variant": "upcoming",
             "status_text": f"Available from {w_disp}",
-            "button_text": "NOT AVAILABLE",
+            "button_text": "Submit",
             "is_open": False,
             "can_submit": False,
+            "is_locked": True,
         }
     elif w_start <= current_minutes <= w_end:
         return {
             "status": "open",
+            "badge_text": "Open Now",
+            "badge_variant": "open",
             "status_text": f"Update is available now • {w_disp}",
-            "button_text": "SUBMIT WORK UPDATE",
+            "button_text": "Submit",
             "is_open": True,
             "can_submit": True,
+            "is_locked": False,
         }
     else:
         return {
             "status": "closed",
+            "badge_text": "Window closed",
+            "badge_variant": "closed",
             "status_text": "Update window closed",
-            "button_text": "NOT AVAILABLE",
+            "button_text": "Submit",
             "is_open": False,
             "can_submit": False,
+            "is_locked": True,
         }
 
 
 # =====================================================================
 # EMPLOYEE: TODAY'S SCHEDULES & AVAILABILITY
 # =====================================================================
+
+def _normalize_submission_details(data: dict, sec: Optional[int] = None) -> dict:
+    """Normalize Firestore dailyUpdate fields across Android App and Website schemas."""
+    if not data:
+        return {}
+    s_num = data.get("section") if data.get("section") is not None else sec
+    try:
+        s_int = int(s_num) if s_num is not None else None
+    except Exception:
+        s_int = sec
+
+    sub_at = data.get("submittedAt")
+    sub_at_iso = sub_at.isoformat() if hasattr(sub_at, "isoformat") else (str(sub_at) if sub_at else "")
+    sub_time = data.get("submittedTime") or ""
+    work_sched = data.get("workSchedule") or data.get("schedule") or "-"
+    sub_win = data.get("submissionWindow") or data.get("updateWindow") or "-"
+    sched_name = data.get("scheduleName") or data.get("sectionTitle") or (f"Work Update 0{s_int}" if s_int else "-")
+    update_txt = data.get("update") or data.get("tasks_completed") or data.get("tasksCompleted") or ""
+
+    return {
+        **data,
+        "section": s_int,
+        "workSchedule": work_sched,
+        "schedule": data.get("schedule") or work_sched,
+        "submissionWindow": sub_win,
+        "updateWindow": data.get("updateWindow") or sub_win,
+        "scheduleName": sched_name,
+        "sectionTitle": data.get("sectionTitle") or sched_name,
+        "update": update_txt,
+        "submittedAt": sub_at_iso,
+        "submittedTime": sub_time,
+        "formattedSubmitted": _format_submitted_display(sub_at, sub_time),
+    }
+
 
 @router.get("/today-schedules")
 def get_today_schedules_for_employee(current_user=Depends(get_current_user)):
@@ -244,53 +344,101 @@ def get_today_schedules_for_employee(current_user=Depends(get_current_user)):
     emp = resolve_employee_info(current_user)
     uid = emp["uid"]
     email = emp["email"]
+    candidate_uids = emp.get("candidate_uids") or ([uid] if uid else [])
     now_ist, curr_min, today_str = get_current_ist()
 
     # Read existing submissions for this employee today from Firestore
     # Path: workUpdates/{uid}/dailyUpdates/{date}_section_{section}
-    submissions_by_section = {}
+    submissions_by_section: Dict[int, dict] = {}
     client = get_firestore_client()
-    if client and uid:
-        try:
-            sub_refs = client.collection("workUpdates").document(uid).collection("dailyUpdates").where("date", "==", today_str).stream()
-            for doc in sub_refs:
-                d = doc.to_dict()
-                sec = d.get("section")
-                if sec is not None:
-                    submissions_by_section[int(sec)] = d
-        except Exception as e:
-            logger.warning(f"Error fetching employee dailyUpdates from Firestore: {e}")
-
-    # Fallback/supplement: check by email in collectionGroup if UID differed
-    if not submissions_by_section and client and email:
-        try:
-            for doc in client.collection_group("dailyUpdates").stream():
-                d = doc.to_dict()
-                if d.get("date") == today_str and str(d.get("employeeEmail", "")).strip().lower() == email:
+    if client:
+        for cand_uid in candidate_uids:
+            try:
+                sub_refs = (
+                    client.collection("workUpdates")
+                    .document(cand_uid)
+                    .collection("dailyUpdates")
+                    .where("date", "==", today_str)
+                    .stream()
+                )
+                for doc in sub_refs:
+                    d = doc.to_dict() or {}
                     sec = d.get("section")
                     if sec is not None:
-                        submissions_by_section[int(sec)] = d
-        except Exception as e:
-            logger.warning(f"Error checking dailyUpdates by email: {e}")
+                        sec_int = int(sec)
+                        if sec_int not in submissions_by_section:
+                            submissions_by_section[sec_int] = _normalize_submission_details(d, sec_int)
+            except Exception as e:
+                logger.warning(f"Error fetching employee dailyUpdates ({cand_uid}) from Firestore: {e}")
 
-    # Also check local SQLite/PostgreSQL fallback if Firestore had no records
-    if not submissions_by_section:
+        # Merge any submission stored under another UID sharing the same email
+        if email:
+            try:
+                for doc in client.collection_group("dailyUpdates").stream():
+                    d = doc.to_dict() or {}
+                    if d.get("date") != today_str:
+                        continue
+                    doc_email = str(d.get("employeeEmail", "")).strip().lower()
+                    doc_emp_id = str(d.get("employeeId", "")).strip()
+                    if doc_email == email or doc_emp_id in candidate_uids:
+                        sec = d.get("section")
+                        if sec is not None:
+                            sec_int = int(sec)
+                            if sec_int not in submissions_by_section:
+                                submissions_by_section[sec_int] = _normalize_submission_details(d, sec_int)
+            except Exception as e:
+                logger.warning(f"Error checking dailyUpdates by email: {e}")
+
+    # Also check firestore_service local store fallback when Firebase client is unavailable
+    if not client or not submissions_by_section:
         try:
-            db = SessionLocal()
-            res = db.execute(
+            local_updates = firestore_service.collection_group("dailyUpdates")
+            for d in local_updates:
+                if d.get("date") == today_str:
+                    emp_match = (
+                        (d.get("employeeId") in candidate_uids)
+                        or (email and str(d.get("employeeEmail", "")).strip().lower() == email)
+                    )
+                    if emp_match:
+                        sec = d.get("section")
+                        if sec is not None:
+                            sec_int = int(sec)
+                            if sec_int not in submissions_by_section:
+                                submissions_by_section[sec_int] = _normalize_submission_details(d, sec_int)
+        except Exception:
+            pass
+
+    # Also check local SQLite/PostgreSQL fallback only when DB backend is not firebase
+    if not submissions_by_section and settings.DATABASE_BACKEND != "firebase":
+        try:
+            pg_db = SessionLocal()
+            res = pg_db.execute(
                 text("SELECT section, tasks_completed, submitted_time, submitted_at FROM work_updates WHERE employee_email = :email AND date = :dt"),
                 {"email": email, "dt": today_str}
             ).fetchall()
             for r in res:
                 if r[0] is not None:
-                    submissions_by_section[int(r[0])] = {
-                        "section": r[0],
-                        "update": r[1],
-                        "submittedTime": r[2],
-                    }
-            db.close()
+                    sec_int = int(r[0])
+                    submissions_by_section[sec_int] = _normalize_submission_details(
+                        {
+                            "section": sec_int,
+                            "update": r[1],
+                            "submittedTime": r[2],
+                            "submittedAt": r[3],
+                        },
+                        sec_int,
+                    )
+            pg_db.close()
         except Exception:
             pass
+
+    # Section standard title mapping
+    section_title_map = {
+        1: "Morning Work Update",
+        2: "Midday Work Update",
+        3: "Afternoon Work Update",
+        4: "Evening Work Update",
+    }
 
     schedules = get_all_schedules_from_db()
     result = []
@@ -300,12 +448,14 @@ def get_today_schedules_for_employee(current_user=Depends(get_current_user)):
         has_sub = submission is not None
 
         avail = calculate_availability(sch, curr_min, has_sub)
+        std_name = section_title_map.get(sec, sch.get("name") or f"Work Update 0{sec}")
 
         item = {
             "id": sch.get("schedule_id") or str(sch.get("id", "")),
             "schedule_id": sch.get("schedule_id", f"SCH-0{sec}"),
-            "name": sch.get("name", f"Work Update 0{sec}"),
+            "name": std_name,
             "section": sec,
+            "section_label": f"UPDATE 0{sec}",
             "work_start": sch.get("work_start", "09:30"),
             "work_end": sch.get("work_end", "11:00"),
             "work_start_display": sch.get("work_start_display", "9:30 AM"),
@@ -319,20 +469,40 @@ def get_today_schedules_for_employee(current_user=Depends(get_current_user)):
             "recurrence": sch.get("recurrence", "Daily"),
             "applicable_to": sch.get("applicable_to", "All"),
             "is_active": sch.get("is_active", True),
-            # Status
+            # Status matching Mobile Screenshot
             "status": avail["status"],
+            "badge_text": avail["badge_text"],
+            "badge_variant": avail["badge_variant"],
             "status_text": avail["status_text"],
             "button_text": avail["button_text"],
+            "is_locked": avail["is_locked"],
             "is_open": avail["is_open"],
             "has_submitted": has_sub,
             "submission_details": submission,
         }
         result.append(item)
 
+    # Next window banner text
+    next_window_text = ""
+    open_sch = next((s for s in result if s["status"] == "open"), None)
+    if open_sch:
+        next_window_text = f"Submission window is open until {open_sch['window_end_display']}"
+    else:
+        upcoming_sch = next((s for s in result if s["status"] == "upcoming"), None)
+        if upcoming_sch:
+            next_window_text = f"Next window opens at {upcoming_sch['window_start_display']}"
+        elif all(s["has_submitted"] for s in result):
+            next_window_text = "All 4 updates submitted for today"
+        else:
+            next_window_text = "All submission windows for today are closed"
+
     return {
         "date": today_str,
         "currentTime": now_ist.strftime("%I:%M %p"),
         "employee": emp,
+        "nextWindowText": next_window_text,
+        "totalUpdatesToday": len(result),
+        "submittedCount": sum(1 for s in result if s["has_submitted"]),
         "schedules": result,
     }
 
@@ -357,6 +527,10 @@ def submit_work_update(
     email = emp["email"]
     name = emp["name"]
     emp_id = emp["employee_id"]
+    candidate_uids = emp.get("candidate_uids") or ([uid] if uid else [])
+
+    if not uid:
+        raise HTTPException(status_code=400, detail="Unable to resolve authenticated employee account.")
 
     text_content = (data.updateText or "").strip()
     if not text_content:
@@ -391,53 +565,96 @@ def submit_work_update(
             detail=f"Update window closed at {matching_sch.get('window_end_display', '')}. Late submissions are not permitted."
         )
 
-    # 3. Check duplicate submission
+    # 3. Check duplicate submission across all candidate UIDs / App+Web paths
     client = get_firestore_client()
     doc_path = f"workUpdates/{uid}/dailyUpdates/{document_id}"
-    if client and uid:
-        try:
-            existing = client.document(doc_path).get()
-            if existing.exists:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Work update has already been submitted for this schedule today."
-                )
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.warning(f"Error checking existing update in Firestore: {e}")
+    if client:
+        for cand_uid in candidate_uids:
+            try:
+                existing = client.document(f"workUpdates/{cand_uid}/dailyUpdates/{document_id}").get()
+                if existing.exists:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Work update has already been submitted for this schedule today."
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.warning(f"Error checking existing update in Firestore ({cand_uid}): {e}")
 
-    now_time_str = now_ist.strftime("%I:%M %p").lower()
+        if email:
+            try:
+                for d in client.collection_group("dailyUpdates").stream():
+                    item = d.to_dict() or {}
+                    if (
+                        item.get("date") == today_str
+                        and str(item.get("section")) == str(sec)
+                        and str(item.get("employeeEmail", "")).strip().lower() == email
+                    ):
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Work update has already been submitted for this schedule today."
+                        )
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.warning(f"Error checking email duplicate in dailyUpdates: {e}")
+
+    now_time_str = now_ist.strftime("%I:%M %p")
     now_utc = datetime.now(timezone.utc)
 
     work_sched_str = matching_sch.get("work_schedule_str") or data.workSchedule or "-"
     sub_win_str = matching_sch.get("submission_window_str") or data.submissionWindow or "-"
     sched_name = matching_sch.get("name") or data.scheduleName or f"Work Update 0{sec}"
 
-    # 4. Save to Firestore
+    # 4. Save to Firestore with full Android App + Website field parity
     firestore_data = {
         "employeeId": uid,
+        "employeeCode": emp_id,
         "employeeEmail": email,
         "employeeName": name,
         "date": today_str,
         "section": sec,
-        "workSchedule": work_sched_str,
-        "submissionWindow": sub_win_str,
+        "sectionTitle": sched_name,
         "scheduleName": sched_name,
+        "schedule": work_sched_str,
+        "workSchedule": work_sched_str,
+        "updateWindow": sub_win_str,
+        "submissionWindow": sub_win_str,
         "update": text_content,
         "submittedAt": now_utc,
         "submittedTime": now_time_str,
+        "source": "website",
     }
 
-    if client and uid:
+    if client:
         try:
+            client.collection("workUpdates").document(uid).set(
+                {
+                    "employeeId": uid,
+                    "employeeCode": emp_id,
+                    "employeeEmail": email,
+                    "employeeName": name,
+                    "updatedAt": now_utc,
+                },
+                merge=True,
+            )
             client.document(doc_path).set(firestore_data)
         except Exception as e:
             logger.error(f"Failed to write work update to Firestore at {doc_path}: {e}")
             raise HTTPException(status_code=500, detail=f"Database write failed: {str(e)}")
+    else:
+        local_doc = {
+            **firestore_data,
+            "id": document_id,
+            "documentId": document_id,
+            "submittedAt": now_utc.isoformat(),
+            "_doc_path": doc_path,
+        }
+        firestore_service.create_document(f"workUpdates/{uid}/dailyUpdates", local_doc)
 
-    # 5. Dual-write to PostgreSQL
-    try:
+    # 5. Optional dual-write to PostgreSQL (only when SQLAlchemy session is active)
+    def _write_pg_update(pg_db: Session):
         from app.models.work_update import WorkUpdate as PgWorkUpdate
         pg_update = PgWorkUpdate(
             update_code=f"UPD-{today_str.replace('-', '')}-{sec}-{uid[:6] if uid else '000'}",
@@ -456,11 +673,9 @@ def submit_work_update(
             submitted_at=now_utc,
             firestore_path=doc_path,
         )
-        db.add(pg_update)
-        db.commit()
-    except Exception as pg_err:
-        logger.warning(f"PostgreSQL work update sync skipped: {pg_err}")
-        db.rollback()
+        pg_db.add(pg_update)
+
+    _run_pg_sync(db, "work update sync", _write_pg_update)
 
     return {
         "success": True,
@@ -468,15 +683,348 @@ def submit_work_update(
         "data": {
             "id": document_id,
             "documentId": document_id,
+            "employeeId": uid,
             "employeeName": name,
             "employeeEmail": email,
             "date": today_str,
             "section": sec,
+            "sectionTitle": sched_name,
+            "scheduleName": sched_name,
+            "schedule": work_sched_str,
             "workSchedule": work_sched_str,
+            "updateWindow": sub_win_str,
             "submissionWindow": sub_win_str,
             "update": text_content,
             "submittedTime": now_time_str,
         }
+    }
+
+
+def _format_day_name(d_str: str) -> str:
+    try:
+        dt = datetime.strptime(d_str, "%Y-%m-%d")
+        return f"{dt.strftime('%A')}, {dt.day} {dt.strftime('%B %Y')}"
+    except Exception:
+        return d_str
+
+
+def _format_submitted_display(sub_at, fallback_time="") -> str:
+    if not sub_at:
+        return fallback_time or "-"
+    try:
+        if isinstance(sub_at, str):
+            dt = datetime.fromisoformat(sub_at.replace("Z", "+00:00"))
+        elif isinstance(sub_at, datetime):
+            dt = sub_at
+        else:
+            return fallback_time or str(sub_at)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt_ist = dt.astimezone(IST)
+        return dt_ist.strftime("%d %b %Y, %I:%M %p")
+    except Exception:
+        return fallback_time or str(sub_at)
+
+
+def _get_all_daily_updates_internal(date_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+    client = get_firestore_client()
+    raw_docs = []
+
+    # 1. Try live Firebase if client is active
+    if client:
+        try:
+            for d in client.collection_group("dailyUpdates").stream():
+                raw_docs.append((d.id, d.reference.path, d.to_dict()))
+        except Exception as e:
+            logger.warning(f"Error querying dailyUpdates collectionGroup: {e}")
+
+    # 2. Local fallback from firestore_service when Firebase client is unavailable
+    if not client and not raw_docs:
+        for d in firestore_service.collection_group("dailyUpdates"):
+            doc_id = d.get("id") or d.get("documentId") or ""
+            path = d.get("firestorePath") or d.get("_doc_path") or f"workUpdates/{d.get('employeeId')}/dailyUpdates/{doc_id}"
+            raw_docs.append((doc_id, path, d))
+
+    # 3. Fallback to PostgreSQL only when backend is not firebase
+    if not raw_docs and settings.DATABASE_BACKEND != "firebase":
+        try:
+            pg_db = SessionLocal()
+            rows = pg_db.execute(text("SELECT id, update_code, employee_id, employee_name, employee_email, date, section, work_schedule, submission_window, schedule_name, tasks_completed, submitted_time, submitted_at, firestore_path FROM work_updates ORDER BY submitted_at DESC NULLS LAST, id DESC")).fetchall()
+            for r in rows:
+                raw_docs.append((
+                    str(r[0]),
+                    r[13] or f"workUpdates/{r[2]}/dailyUpdates/{r[1]}",
+                    {
+                        "id": str(r[0]),
+                        "documentId": r[1] or str(r[0]),
+                        "employeeId": r[2],
+                        "employeeName": r[3],
+                        "employeeEmail": r[4],
+                        "date": str(r[5]),
+                        "section": r[6],
+                        "workSchedule": r[7] or "-",
+                        "submissionWindow": r[8] or "-",
+                        "scheduleName": r[9] or (f"Work Update 0{r[6]}" if r[6] else "-"),
+                        "update": r[10],
+                        "submittedTime": r[11],
+                        "submittedAt": r[12].isoformat() if r[12] else None,
+                    }
+                ))
+            pg_db.close()
+        except Exception as e:
+            logger.warning(f"Error querying PostgreSQL work_updates fallback: {e}")
+
+    # Build employee lookup cache
+    emp_cache = {}
+    try:
+        all_emps = firestore_service.list_documents("employees")
+        for e in all_emps:
+            uid = e.get("uid") or e.get("id") or ""
+            email = str(e.get("email") or "").strip().lower()
+            name = e.get("name") or e.get("full_name") or ""
+            for k in _collect_employee_keys(e):
+                emp_cache[k] = (name, email, uid or e.get("id") or "")
+    except Exception:
+        pass
+
+    parsed = []
+    seen_paths = set()
+    for doc_id, path, data in raw_docs:
+        if path and path in seen_paths:
+            continue
+        if path:
+            seen_paths.add(path)
+
+        d_date = data.get("date") or ""
+        if date_filter and d_date != date_filter:
+            continue
+
+        emp_uid = str(data.get("employeeId") or "").strip()
+        emp_email = str(data.get("employeeEmail") or "").strip().lower()
+
+        cached = emp_cache.get(emp_uid.lower()) or emp_cache.get(emp_email)
+        if cached:
+            emp_name = cached[0] or data.get("employeeName")
+            emp_email = emp_email or cached[1]
+            canonical_uid = cached[2] or emp_uid
+        else:
+            emp_name = data.get("employeeName") or (emp_email.split("@")[0].capitalize() if emp_email else "Employee")
+            canonical_uid = emp_uid
+
+        norm = _normalize_submission_details(data)
+        parsed.append({
+            "id": doc_id,
+            "documentId": doc_id,
+            "firestorePath": path,
+            "employeeId": emp_uid or canonical_uid,
+            "canonicalUid": canonical_uid,
+            "employeeName": emp_name,
+            "employeeEmail": emp_email,
+            "date": d_date,
+            "section": norm["section"],
+            "workSchedule": norm["workSchedule"],
+            "submissionWindow": norm["submissionWindow"],
+            "scheduleName": norm["scheduleName"],
+            "update": norm["update"],
+            "submittedAt": norm["submittedAt"],
+            "submittedTime": norm["submittedTime"],
+            "formattedSubmitted": norm["formattedSubmitted"],
+        })
+    return parsed
+
+
+# =====================================================================
+# TIER 1: EMPLOYEE SUMMARIES (Screenshot 1)
+# =====================================================================
+
+@router.get("/employees-summary")
+def get_work_updates_employees_summary(current_user=Depends(get_current_user)):
+    """
+    Tier 1 (Mobile Screenshot 1):
+    Returns employee summaries with:
+    - name, email, uid
+    - totalSubmittedUpdates
+    - latestUpdate (YYYY-MM-DD)
+    - workDaysCount
+    Sorted with employees who have updates first, ordered by latest date descending.
+    """
+    all_updates = _get_all_daily_updates_internal()
+    all_emps = firestore_service.list_documents("employees")
+
+    updates_by_key: Dict[str, List[dict]] = {}
+    for u in all_updates:
+        for k in (u.get("employeeId"), u.get("canonicalUid"), u.get("employeeEmail")):
+            if k:
+                updates_by_key.setdefault(str(k).strip().lower(), []).append(u)
+
+    seen_keys = set()
+    summary = []
+
+    for emp in all_emps:
+        uid = emp.get("uid") or emp.get("id")
+        email = (emp.get("email") or "").strip().lower()
+        name = emp.get("name") or emp.get("full_name") or "Employee"
+
+        key = email or uid
+        if not key or key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        emp_updates = []
+        seen_doc_keys = set()
+        for k in _collect_employee_keys(emp):
+            for u in updates_by_key.get(k, []):
+                ukey = u.get("firestorePath") or f"{u.get('date')}_{u.get('section')}"
+                if ukey not in seen_doc_keys:
+                    seen_doc_keys.add(ukey)
+                    emp_updates.append(u)
+
+        dates = sorted(list(set(u.get("date") for u in emp_updates if u.get("date"))), reverse=True)
+
+        summary.append({
+            "uid": uid,
+            "employeeId": uid,
+            "name": name,
+            "employeeName": name,
+            "email": email,
+            "employeeEmail": email,
+            "totalSubmittedUpdates": len(emp_updates),
+            "latestUpdate": dates[0] if dates else None,
+            "workDaysCount": len(dates),
+        })
+
+    # Sort: employees with updates first (latest date desc, then count desc)
+    summary.sort(
+        key=lambda s: (
+            1 if s["totalSubmittedUpdates"] > 0 else 0,
+            s["latestUpdate"] or "",
+            s["totalSubmittedUpdates"]
+        ),
+        reverse=True
+    )
+    return summary
+
+
+def _resolve_employee_history_target(employee_id: str, current_user, all_updates: List[dict]):
+    """Resolve all identifiers & metadata for a target employee across App and Website."""
+    target_raw = (employee_id or "").strip()
+    if target_raw.lower() == "me":
+        self_info = resolve_employee_info(current_user)
+        target_raw = self_info["uid"] or self_info["email"] or target_raw
+
+    e_clean = target_raw.lower()
+    emp_keys = {e_clean}
+    resolved_uid = resolve_auth_uid(target_raw)
+    if resolved_uid:
+        emp_keys.add(resolved_uid.strip().lower())
+
+    emp_name = "Employee"
+    emp_email = target_raw if "@" in target_raw else ""
+    emp_uid = resolved_uid or target_raw
+
+    emps = firestore_service.list_documents("employees")
+    for e in emps:
+        keys = set(_collect_employee_keys(e))
+        if emp_keys & keys:
+            emp_keys.update(keys)
+            emp_name = e.get("name") or e.get("full_name") or emp_name
+            emp_email = (e.get("email") or emp_email).strip().lower()
+            emp_uid = e.get("uid") or e.get("id") or emp_uid
+            break
+
+    emp_updates = []
+    seen_doc_keys = set()
+    for u in all_updates:
+        u_keys = {
+            str(u.get("employeeId") or "").strip().lower(),
+            str(u.get("canonicalUid") or "").strip().lower(),
+            str(u.get("employeeEmail") or "").strip().lower(),
+        } - {""}
+        if emp_keys & u_keys:
+            ukey = u.get("firestorePath") or f"{u.get('date')}_{u.get('section')}"
+            if ukey not in seen_doc_keys:
+                seen_doc_keys.add(ukey)
+                emp_updates.append(u)
+
+    if emp_updates and emp_name == "Employee":
+        emp_name = emp_updates[0].get("employeeName") or emp_name
+        emp_email = emp_updates[0].get("employeeEmail") or emp_email
+        emp_uid = emp_updates[0].get("canonicalUid") or emp_updates[0].get("employeeId") or emp_uid
+
+    return emp_uid, emp_name, emp_email, emp_updates
+
+
+# =====================================================================
+# TIER 2: EMPLOYEE WORK HISTORY DATES (Screenshot 2)
+# =====================================================================
+
+@router.get("/employee/{employee_id}/history")
+def get_employee_work_history(employee_id: str, current_user=Depends(get_current_user)):
+    """
+    Tier 2 (Mobile Screenshot 2):
+    Returns daily work history for a given employee with:
+    - employee info (name, email, uid)
+    - totalWorkDays
+    - workDays list with formatted date, section count, raw date
+    """
+    all_updates = _get_all_daily_updates_internal()
+    emp_uid, emp_name, emp_email, emp_updates = _resolve_employee_history_target(
+        employee_id, current_user, all_updates
+    )
+
+    dates = sorted(list(set(u.get("date") for u in emp_updates if u.get("date"))), reverse=True)
+    work_days = []
+    for d in dates:
+        day_updates = [u for u in emp_updates if u.get("date") == d]
+        work_days.append({
+            "date": d,
+            "formattedDate": _format_day_name(d),
+            "sectionCount": len(day_updates),
+            "sectionsSubmitted": len(day_updates),
+        })
+
+    return {
+        "employee": {
+            "uid": emp_uid,
+            "name": emp_name,
+            "email": emp_email,
+        },
+        "totalWorkDays": len(work_days),
+        "workDays": work_days,
+    }
+
+
+# =====================================================================
+# TIER 3: EMPLOYEE DAY SECTIONS (Screenshot 3)
+# =====================================================================
+
+@router.get("/employee/{employee_id}/date/{date_str}")
+def get_employee_day_work_updates(employee_id: str, date_str: str, current_user=Depends(get_current_user)):
+    """
+    Tier 3 (Mobile Screenshot 3):
+    Returns the specific day's work updates for an employee:
+    - employee info
+    - date and formattedDate (e.g. Wednesday, 28 October 2026)
+    - sectionCount
+    - sections list (Section 1, 2, 3, 4) with schedule, window, update text, formattedSubmitted
+    """
+    all_updates = _get_all_daily_updates_internal(date_filter=date_str)
+    emp_uid, emp_name, emp_email, emp_updates = _resolve_employee_history_target(
+        employee_id, current_user, all_updates
+    )
+
+    emp_updates.sort(key=lambda u: u.get("section") or 0)
+
+    return {
+        "employee": {
+            "uid": emp_uid,
+            "name": emp_name,
+            "email": emp_email,
+        },
+        "date": date_str,
+        "formattedDate": _format_day_name(date_str),
+        "sectionCount": len(emp_updates),
+        "sections": emp_updates,
     }
 
 
@@ -495,149 +1043,27 @@ def list_work_updates(
     """
     Retrieve all employee work updates with real employee names, section, schedule,
     submission window, update content, and submitted timestamp.
-    Reads from Firestore collectionGroup('dailyUpdates') with fallback to PostgreSQL.
     """
     user_role = str(getattr(current_user, "role", "employee")).strip().lower()
-    client = get_firestore_client()
+    updates = _get_all_daily_updates_internal(date_filter=date)
 
-    updates = []
-    
-    # 1. Fetch employee name lookup from Firestore to ensure full names match
-    employee_name_cache = {}
-    if client:
-        try:
-            for emp_doc in client.collection("employees").stream():
-                edata = emp_doc.to_dict()
-                ename = edata.get("name") or edata.get("full_name") or edata.get("employeeName") or ""
-                e_id = edata.get("employee_id") or edata.get("employeeId") or ""
-                e_email = str(edata.get("email") or "").strip().lower()
-                if ename:
-                    employee_name_cache[emp_doc.id] = (ename, e_id, e_email)
-                    if e_email:
-                        employee_name_cache[e_email] = (ename, e_id, e_email)
-                    if e_id:
-                        employee_name_cache[e_id] = (ename, e_id, e_email)
-        except Exception as e:
-            logger.warning(f"Error loading employee cache: {e}")
+    if user_role not in ["admin", "team_leader", "project_hr"]:
+        emp_info = resolve_employee_info(current_user)
+        curr_email = emp_info["email"]
+        allowed_uids = {c.lower() for c in emp_info.get("candidate_uids", []) if c}
+        updates = [
+            u for u in updates
+            if (curr_email and (u.get("employeeEmail") or "").strip().lower() == curr_email)
+            or (str(u.get("employeeId") or "").strip().lower() in allowed_uids)
+            or (str(u.get("canonicalUid") or "").strip().lower() in allowed_uids)
+        ]
 
-    # 2. Query Firestore
-    if client:
-        try:
-            docs = list(client.collection_group("dailyUpdates").stream())
-            for d in docs:
-                data = d.to_dict()
-                if date and data.get("date") != date:
-                    continue
-                path = d.reference.path
-                doc_id = d.id
-
-                emp_uid = data.get("employeeId") or ""
-                emp_email = str(data.get("employeeEmail") or "").strip().lower()
-                
-                # Resolve employee name
-                cached = employee_name_cache.get(emp_uid) or employee_name_cache.get(emp_email)
-                if cached:
-                    emp_name = cached[0]
-                    emp_code = cached[1]
-                else:
-                    emp_name = data.get("employeeName") or (emp_email.split("@")[0].capitalize() if emp_email else "Employee")
-                    emp_code = emp_uid
-
-                # If non-admin user, only return their own
-                if user_role != "admin" and emp_email != str(getattr(current_user, "email", "")).lower():
-                    continue
-
-                # Submitted timestamp formatting
-                sub_at = data.get("submittedAt")
-                sub_at_iso = ""
-                sub_disp = data.get("submittedTime") or ""
-                if hasattr(sub_at, "isoformat"):
-                    sub_at_iso = sub_at.isoformat()
-                    # Convert UTC timestamp to IST for display
-                    if hasattr(sub_at, "astimezone"):
-                        sub_ist = sub_at.astimezone(IST)
-                        sub_disp = sub_ist.strftime("%d %b %Y, %I:%M %p")
-                    else:
-                        sub_disp = sub_at.strftime("%d %b %Y, %I:%M %p")
-                elif isinstance(sub_at, datetime):
-                    sub_at_iso = sub_at.isoformat()
-                    sub_disp = sub_at.strftime("%d %b %Y, %I:%M %p")
-
-                sec_val = data.get("section")
-                try:
-                    sec_int = int(sec_val) if sec_val is not None else None
-                except Exception:
-                    sec_int = None
-
-                item = {
-                    "id": doc_id,
-                    "documentId": doc_id,
-                    "firestorePath": path,
-                    "employeeId": emp_code or emp_uid or "--",
-                    "employeeName": emp_name,
-                    "employeeEmail": emp_email,
-                    "date": data.get("date", ""),
-                    "section": sec_int,
-                    "workSchedule": data.get("workSchedule") or "-",
-                    "submissionWindow": data.get("submissionWindow") or "-",
-                    "scheduleName": data.get("scheduleName") or (f"Work Update 0{sec_int}" if sec_int else "-"),
-                    "update": data.get("update") or data.get("tasks_completed") or "",
-                    "submittedAt": sub_at_iso,
-                    "submittedTime": sub_disp or data.get("submittedTime") or "Today",
-                }
-                updates.append(item)
-        except Exception as e:
-            logger.error(f"Error querying dailyUpdates collectionGroup: {e}")
-
-    # Fallback to PostgreSQL if Firestore was unavailable or returned 0
-    if not updates:
-        try:
-            db = SessionLocal()
-            q = "SELECT id, update_code, employee_id, employee_name, employee_email, date, section, work_schedule, submission_window, schedule_name, tasks_completed, submitted_time, submitted_at, firestore_path FROM work_updates"
-            params = {}
-            conditions = []
-            if date:
-                conditions.append("date = :dt")
-                params["dt"] = date
-            if user_role != "admin":
-                conditions.append("employee_email = :email")
-                params["email"] = getattr(current_user, "email", "")
-            if conditions:
-                q += " WHERE " + " AND ".join(conditions)
-            q += " ORDER BY submitted_at DESC NULLS LAST, id DESC"
-
-            rows = db.execute(text(q), params).fetchall()
-            for r in rows:
-                sub_at = r[12]
-                sub_at_iso = sub_at.isoformat() if sub_at else ""
-                sub_disp = sub_at.strftime("%d %b %Y, %I:%M %p") if sub_at else (r[11] or "")
-                updates.append({
-                    "id": str(r[0]),
-                    "documentId": r[1] or str(r[0]),
-                    "firestorePath": r[13],
-                    "employeeId": r[2] or "--",
-                    "employeeName": r[3],
-                    "employeeEmail": r[4],
-                    "date": str(r[5]),
-                    "section": r[6],
-                    "workSchedule": r[7] or "-",
-                    "submissionWindow": r[8] or "-",
-                    "scheduleName": r[9] or (f"Work Update 0{r[6]}" if r[6] else "-"),
-                    "update": r[10],
-                    "submittedAt": sub_at_iso,
-                    "submittedTime": sub_disp,
-                })
-            db.close()
-        except Exception as e:
-            logger.warning(f"Error querying PostgreSQL work_updates: {e}")
-
-    # 3. Apply memory filters (search, section)
     filtered = updates
     if search:
         s_low = search.strip().lower()
         filtered = [
             u for u in filtered
-            if s_low in u["employeeName"].lower() or s_low in (u["employeeEmail"] or "").lower()
+            if s_low in u["employeeName"].lower() or s_low in (u["employeeEmail"] or "").lower() or s_low in u["update"].lower()
         ]
     if section and section.upper() != "ALL":
         try:
@@ -646,7 +1072,6 @@ def list_work_updates(
         except Exception:
             pass
 
-    # Sort descending by submittedAt
     filtered.sort(key=lambda u: (str(u.get("date", "")), str(u.get("submittedAt", ""))), reverse=True)
     return filtered
 
@@ -688,16 +1113,15 @@ def delete_work_update(
         except Exception as e:
             logger.warning(f"Error searching doc {doc_id} to delete in collectionGroup: {e}")
 
-    # 3. Delete from PostgreSQL
-    try:
-        db.execute(
+    # 3. Optional delete from PostgreSQL
+    _run_pg_sync(
+        db,
+        "work update delete",
+        lambda pg_db: pg_db.execute(
             text("DELETE FROM work_updates WHERE update_code = :doc_id OR firestore_path = :path OR id::text = :doc_id"),
-            {"doc_id": doc_id, "path": path or ""}
-        )
-        db.commit()
-    except Exception as e:
-        logger.warning(f"Error deleting from PostgreSQL work_updates: {e}")
-        db.rollback()
+            {"doc_id": doc_id, "path": path or ""},
+        ),
+    )
 
     return {"success": True, "message": "Work update deleted successfully."}
 
@@ -744,16 +1168,16 @@ def delete_all_work_updates(
             logger.error(f"Error during bulk deletion in Firestore: {e}")
             raise HTTPException(status_code=500, detail=f"Failed bulk deletion: {str(e)}")
 
-    # Delete from PostgreSQL
-    try:
-        if date and not all_dates:
-            db.execute(text("DELETE FROM work_updates WHERE date = :dt"), {"dt": date})
-        else:
-            db.execute(text("DELETE FROM work_updates"))
-        db.commit()
-    except Exception as e:
-        logger.warning(f"Error deleting PostgreSQL work_updates: {e}")
-        db.rollback()
+    # Optional delete from PostgreSQL
+    _run_pg_sync(
+        db,
+        "bulk work_updates delete",
+        lambda pg_db: (
+            pg_db.execute(text("DELETE FROM work_updates WHERE date = :dt"), {"dt": date})
+            if (date and not all_dates)
+            else pg_db.execute(text("DELETE FROM work_updates"))
+        ),
+    )
 
     scope_str = f"for date {date}" if (date and not all_dates) else "across all dates"
     return {
@@ -827,32 +1251,31 @@ def create_work_schedule(
     doc_data["id"] = sch_id
     firestore_service.create_document("work_schedules", doc_data)
 
-    # Sync to PostgreSQL
-    try:
+    # Optional sync to PostgreSQL
+    def _write_pg_sch(pg_db: Session):
         from app.models.work_schedule import WorkSchedule as PgWorkSchedule
-        pg_sch = PgWorkSchedule(
-            schedule_id=sch_id,
-            name=doc_data["name"],
-            section=doc_data["section"],
-            work_start=doc_data["work_start"],
-            work_end=doc_data["work_end"],
-            work_start_display=doc_data["work_start_display"],
-            work_end_display=doc_data["work_end_display"],
-            work_schedule_str=doc_data["work_schedule_str"],
-            window_start=doc_data["window_start"],
-            window_end=doc_data["window_end"],
-            window_start_display=doc_data["window_start_display"],
-            window_end_display=doc_data["window_end_display"],
-            submission_window_str=doc_data["submission_window_str"],
-            recurrence=doc_data["recurrence"],
-            applicable_to=doc_data["applicable_to"],
-            is_active=doc_data["is_active"],
+        pg_db.add(
+            PgWorkSchedule(
+                schedule_id=sch_id,
+                name=doc_data["name"],
+                section=doc_data["section"],
+                work_start=doc_data["work_start"],
+                work_end=doc_data["work_end"],
+                work_start_display=doc_data["work_start_display"],
+                work_end_display=doc_data["work_end_display"],
+                work_schedule_str=doc_data["work_schedule_str"],
+                window_start=doc_data["window_start"],
+                window_end=doc_data["window_end"],
+                window_start_display=doc_data["window_start_display"],
+                window_end_display=doc_data["window_end_display"],
+                submission_window_str=doc_data["submission_window_str"],
+                recurrence=doc_data["recurrence"],
+                applicable_to=doc_data["applicable_to"],
+                is_active=doc_data["is_active"],
+            )
         )
-        db.add(pg_sch)
-        db.commit()
-    except Exception as e:
-        logger.warning(f"Error syncing schedule to PostgreSQL: {e}")
-        db.rollback()
+
+    _run_pg_sync(db, "schedule create", _write_pg_sch)
 
     return doc_data
 
@@ -894,18 +1317,16 @@ def update_work_schedule(
 
     firestore_service.update_document("work_schedules", schedule_id, update_dict)
 
-    # Sync to PostgreSQL
-    try:
+    # Optional sync to PostgreSQL
+    def _update_pg_sch(pg_db: Session):
         from app.models.work_schedule import WorkSchedule as PgWorkSchedule
-        pg_sch = db.query(PgWorkSchedule).filter(PgWorkSchedule.schedule_id == schedule_id).first()
+        pg_sch = pg_db.query(PgWorkSchedule).filter(PgWorkSchedule.schedule_id == schedule_id).first()
         if pg_sch:
             for k, v in update_dict.items():
                 if hasattr(pg_sch, k):
                     setattr(pg_sch, k, v)
-            db.commit()
-    except Exception as e:
-        logger.warning(f"Error updating PostgreSQL schedule: {e}")
-        db.rollback()
+
+    _run_pg_sync(db, "schedule update", _update_pg_sch)
 
     existing.update(update_dict)
     return existing
@@ -919,12 +1340,11 @@ def delete_work_schedule(
 ):
     """Admin: delete a work schedule."""
     firestore_service.delete_document("work_schedules", schedule_id)
-    try:
+
+    def _delete_pg_sch(pg_db: Session):
         from app.models.work_schedule import WorkSchedule as PgWorkSchedule
-        db.query(PgWorkSchedule).filter(PgWorkSchedule.schedule_id == schedule_id).delete()
-        db.commit()
-    except Exception as e:
-        logger.warning(f"Error deleting PostgreSQL schedule: {e}")
-        db.rollback()
+        pg_db.query(PgWorkSchedule).filter(PgWorkSchedule.schedule_id == schedule_id).delete()
+
+    _run_pg_sync(db, "schedule delete", _delete_pg_sch)
 
     return {"success": True, "message": "Work schedule deleted successfully."}

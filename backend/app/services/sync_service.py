@@ -296,6 +296,8 @@ def sync_attendance_to_postgres(
     db: Optional[Session] = None,
 ) -> None:
     """Synchronize attendance check-in / check-out to PostgreSQL."""
+    if getattr(settings, "DATABASE_BACKEND", "firebase") != "postgres":
+        return
     should_close = False
     session = db
     if session is None:

@@ -1,226 +1,1033 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
-    function isAuthenticated() {
+    // =====================================================
+    // AUTHENTICATION HELPERS
+    // =====================================================
+
+    function isSignedIn() {
       return request.auth != null;
     }
 
     function isAdmin() {
-      return isAuthenticated() && (
-        request.auth.token.role == 'admin' ||
-        request.auth.token.admin == true ||
-        request.auth.token.email == 'admin@arshith.com'
-      );
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        && get(/databases/$(database)/documents/admins/$(request.auth.uid))
+          .data.role in ["admin", "Admin", "ADMIN"];
     }
 
-    function isOwner(uid) {
-      return isAuthenticated() && (
-        request.auth.uid == uid ||
-        request.auth.token.employee_id == uid
-      );
+    function isApprovedEmployee() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/employees/$(request.auth.uid))
+        && get(/databases/$(database)/documents/employees/$(request.auth.uid))
+          .data.status == "approved";
     }
 
-    // 1. Admins Collection
+    function canBrowseChatDirectory() {
+      return isAdmin() || isApprovedEmployee();
+    }
+
+    // =====================================================
+    // TEAM HELPERS
+    // =====================================================
+
+    function isTeamMember(teamData) {
+      return isSignedIn()
+        && teamData.memberIds is list
+        && request.auth.uid in teamData.memberIds;
+    }
+
+    function validTeamMembers(data) {
+      return data.memberIds is list
+        && data.memberIds.size() >= 2
+        && data.memberIds.size() <= 100
+        && request.auth.uid in data.memberIds;
+    }
+
+    // =====================================================
+    // ADMINS
+    // =====================================================
+
     match /admins/{adminId} {
-      allow read: if isAuthenticated() && (request.auth.uid == adminId || isAdmin());
-      allow write: if isAdmin();
+      allow read: if isSignedIn()
+        && (
+          request.auth.uid == adminId
+          || canBrowseChatDirectory()
+        );
+
+      allow update: if isSignedIn()
+        && request.auth.uid == adminId
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly(["fcmToken", "fcmTokenUpdatedAt"]);
+
+      allow create, delete: if false;
     }
 
-    // 2. Employees Collection (Authoritative across mobile and website)
-    match /employees/{employeeDocId} {
-      allow read: if isAuthenticated() && (
-        request.auth.uid == employeeDocId ||
-        resource.data.uid == request.auth.uid ||
-        resource.data.firebase_uid == request.auth.uid ||
-        resource.data.employee_id == request.auth.token.employee_id ||
-        resource.data.email == request.auth.token.email ||
-        isAdmin()
-      );
-      // Allow self-registration from mobile/web with pending status
-      allow create: if isAuthenticated() && (
-        (request.auth.uid == employeeDocId && request.resource.data.status in ['pending', 'Pending']) ||
-        isAdmin()
-      );
-      // Only authorized admins can approve, reject, or modify employee status
-      allow update, delete: if isAdmin();
-    }
+    // =====================================================
+    // USERS
+    // =====================================================
 
-    // 3. Attendance Collection (Top-Level)
-    match /attendance/{attendanceId} {
-      allow read: if isAuthenticated() && (
-        resource.data.firebase_uid == request.auth.uid ||
-        resource.data.employee_uid == request.auth.uid ||
-        resource.data.employee_id == request.auth.token.employee_id ||
-        resource.data.employeeId == request.auth.token.employee_id ||
-        isAdmin()
-      );
-      allow create: if isAuthenticated() && (
-        request.resource.data.firebase_uid == request.auth.uid ||
-        request.resource.data.employee_uid == request.auth.uid ||
-        request.resource.data.employee_id == request.auth.token.employee_id ||
-        request.resource.data.employeeId == request.auth.token.employee_id ||
-        isAdmin()
-      );
-      allow update: if isAuthenticated() && (
-        (resource.data.firebase_uid == request.auth.uid || resource.data.employee_uid == request.auth.uid || resource.data.employee_id == request.auth.token.employee_id) ||
-        isAdmin()
-      );
-      allow delete: if isAdmin();
-    }
-
-    // Attendance Subcollections (Mobile app hierarchy: attendance/{uid}/records/{date})
-    match /attendance/{userId}/records/{recordId} {
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      allow create, update: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      allow delete: if isAdmin();
-    }
-
-    // Attendance Collection Group queries (Admin multi-employee summaries)
-    match /{path=**}/records/{recordId} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
-    }
-
-    // Also support plural alias if present
-    match /attendances/{attendanceId} {
-      allow read, write: if isAuthenticated() && (
-        resource.data.firebase_uid == request.auth.uid ||
-        resource.data.employee_id == request.auth.token.employee_id ||
-        isAdmin()
-      );
-    }
-
-    // 4. Notifications & Announcements Collection
-    match /notifications/{notificationId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
-    }
-    match /announcements/{announcementId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
-    }
-
-    // 5. OfficeSettings & System Settings Collection
-    match /officeSettings/{settingId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
-    }
-    match /office_timings/{timingId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
-    }
-    match /settings/{settingId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
-    }
-
-    // 6. Users Collection (Authentication metadata)
     match /users/{userId} {
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      allow create: if isAuthenticated();
-      allow update: if isAdmin() || (
-        isAuthenticated() && request.auth.uid == userId &&
-        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'approval_status', 'is_active'])
+      allow read: if isSignedIn()
+        && (
+          request.auth.uid == userId
+          || isAdmin()
+          || canBrowseChatDirectory()
+        );
+      allow write: if isAdmin()
+        || (
+          isSignedIn()
+          && request.auth.uid == userId
+        );
+    }
+
+    // =====================================================
+    // EMPLOYEES
+    // =====================================================
+
+    match /employees/{userId} {
+      allow read: if isSignedIn()
+        && (
+          request.auth.uid == userId
+          || isAdmin()
+          || (
+            isApprovedEmployee()
+            && resource.data.status == "approved"
+          )
+        );
+
+      allow create: if isSignedIn()
+        && request.auth.uid == userId;
+
+      allow update: if isSignedIn()
+        && (
+          request.auth.uid == userId
+          || isAdmin()
+        );
+
+      allow delete: if false;
+    }
+
+    // =====================================================
+    // ATTENDANCE
+    // =====================================================
+
+    match /attendance/{userId}/records/{recordId} {
+      allow read: if isSignedIn()
+        && (
+          request.auth.uid == userId
+          || isAdmin()
+        );
+
+      allow create, update: if isSignedIn()
+        && request.auth.uid == userId;
+
+      allow delete: if false;
+    }
+
+    match /{path=**}/records/{recordId} {
+      allow read: if isAdmin();
+    }
+
+    // =====================================================
+    // LEAVES
+    // =====================================================
+
+    match /leaves/{userId}/requests/{requestId} {
+      allow read: if isSignedIn()
+        && (
+          request.auth.uid == userId
+          || isAdmin()
+        );
+
+      allow create: if isSignedIn()
+        && request.auth.uid == userId;
+
+      allow update: if (
+        isSignedIn()
+        && request.auth.uid == userId
+      ) || (
+        isAdmin()
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly(["status", "reviewedAt", "reviewedBy"])
       );
+
+      allow delete: if isSignedIn()
+        && request.auth.uid == userId;
+    }
+
+    match /{path=**}/requests/{requestId} {
+      allow read: if isAdmin();
+    }
+
+    // =====================================================
+    // HOLIDAYS
+    // =====================================================
+
+    match /holidays/{holidayId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // =====================================================
+    // ANNOUNCEMENTS
+    // =====================================================
+
+    match /announcements/{announcementId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // =====================================================
+    // MEETINGS
+    // =====================================================
+
+    match /meetings/{meetingId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+
+      match /joinRequests/{requestId} {
+        allow create: if isSignedIn()
+          && request.auth.uid == requestId;
+
+        allow read: if isSignedIn()
+          && (
+            request.auth.uid == requestId
+            || isAdmin()
+          );
+
+        allow update: if isAdmin()
+          && request.resource.data.diff(resource.data)
+            .affectedKeys()
+            .hasOnly(["status", "reviewedAt", "reviewedBy"]);
+
+        allow delete: if isSignedIn()
+          && request.auth.uid == requestId;
+      }
+    }
+
+    // =====================================================
+    // TEAMS
+    // =====================================================
+
+    match /teams/{teamId} {
+      allow get: if isAdmin()
+        || isTeamMember(resource.data);
+
+      allow list: if isAdmin()
+        || (
+          isSignedIn()
+          && request.auth.uid in resource.data.memberIds
+        );
+
+      allow create: if isAdmin()
+        || (
+          isApprovedEmployee()
+          && validTeamMembers(request.resource.data)
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+        );
+
+      allow update, delete: if isAdmin();
+    }
+
+    // =====================================================
+    // WORK ASSIGNMENTS
+    // =====================================================
+
+    match /workAssignments/{assignmentId} {
+
+      allow read: if isAdmin()
+        || (
+          isSignedIn()
+          && request.auth.uid in resource.data.employeeIds
+        );
+
+      allow create, delete: if isAdmin();
+
+      allow update: if isAdmin()
+        || (
+          isSignedIn()
+          && resource.data.employeeIds is list
+          && request.auth.uid in resource.data.employeeIds
+          && request.resource.data.diff(resource.data)
+            .affectedKeys()
+            .hasOnly([
+              "status",
+              "startedAt",
+              "completedAt",
+              "updatedAt"
+            ])
+        );
+    }
+
+    // =====================================================
+    // WORK UPDATES
+    // =====================================================
+
+    match /workUpdates/{userId} {
+      allow read: if isSignedIn()
+        && (
+          request.auth.uid == userId
+          || isAdmin()
+        );
+
+      allow create, update, delete: if false;
+
+      match /updates/{updateId} {
+        allow read: if isSignedIn()
+          && (
+            request.auth.uid == userId
+            || isAdmin()
+          );
+
+        allow create: if isSignedIn()
+          && request.auth.uid == userId;
+
+        allow update, delete: if isAdmin();
+      }
+
+      match /dailyUpdates/{updateId} {
+        allow read: if isSignedIn()
+          && (
+            request.auth.uid == userId
+            || isAdmin()
+          );
+
+        allow create: if isSignedIn()
+          && request.auth.uid == userId;
+
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    match /{path=**}/updates/{updateId} {
+      allow read: if isAdmin();
+    }
+
+    match /{path=**}/dailyUpdates/{updateId} {
+      allow read: if isAdmin();
+    }
+
+    // =====================================================
+    // OFFICE SETTINGS
+    // =====================================================
+
+    match /settings/{settingId} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // =====================================================
+    // SPECIAL OFFICE TIMINGS
+    // =====================================================
+
+    match /specialOfficeTimings/{date} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // =====================================================
+    // LEGACY CHAT HELPERS
+    // =====================================================
+
+    function isConversationDataMember(data) {
+      return isSignedIn()
+        && data.memberIds is list
+        && request.auth.uid in data.memberIds;
+    }
+
+    function isConversationMember(conversationId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/conversations/$(conversationId))
+        && isConversationDataMember(
+          get(/databases/$(database)/documents/conversations/$(conversationId)).data
+        );
+    }
+
+    function validConversationCreate() {
+      return canBrowseChatDirectory()
+        && request.resource.data.memberIds is list
+        && request.resource.data.memberIds.size() >= 2
+        && request.resource.data.memberIds.size() <= 100
+        && request.auth.uid in request.resource.data.memberIds
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.type in ["direct", "group"]
+        && (
+          (
+            request.resource.data.type == "direct"
+            && request.resource.data.memberIds.size() == 2
+          )
+          ||
+          (
+            request.resource.data.type == "group"
+            && request.resource.data.name is string
+            && request.resource.data.name.size() > 0
+          )
+        );
+    }
+
+    function validConversationMetadataUpdate() {
+      return isConversationDataMember(resource.data)
+        && isConversationDataMember(request.resource.data)
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            "lastMessage",
+            "lastMessageTime",
+            "lastSenderId",
+            "unreadCounts"
+          ]);
+    }
+
+    function validGroupManagementUpdate() {
+      return isAdmin()
+        && resource.data.type == "group"
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            "memberIds",
+            "memberNames",
+            "memberBusinessIds",
+            "name"
+          ])
+        && request.resource.data.memberIds is list
+        && request.resource.data.memberIds.size() >= 2
+        && request.resource.data.memberIds.size() <= 100;
+    }
+
+    // =====================================================
+    // LEGACY CONVERSATIONS
+    // =====================================================
+
+    match /conversations/{conversationId} {
+      allow get: if isSignedIn()
+        && (
+          isAdmin()
+          || resource == null
+          || isConversationDataMember(resource.data)
+        );
+
+      allow list: if isAdmin()
+        || (
+          isSignedIn()
+          && request.auth.uid in resource.data.memberIds
+        );
+
+      allow create: if isAdmin()
+        || validConversationCreate();
+
+      allow update: if isAdmin()
+        || validConversationMetadataUpdate()
+        || validGroupManagementUpdate();
+
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow get, list: if isAdmin()
+          || isConversationMember(conversationId);
+
+        allow create: if isAdmin()
+          || (
+            isConversationMember(conversationId)
+            && request.resource.data.senderId == request.auth.uid
+            && request.resource.data.content is string
+            && request.resource.data.content.size() <= 5000
+            && (
+              request.resource.data.content.size() > 0
+              || (
+                request.resource.data.attachments is list
+                && request.resource.data.attachments.size() > 0
+              )
+            )
+            && request.resource.data.timestamp is timestamp
+            && request.resource.data.readBy is list
+            && request.auth.uid in request.resource.data.readBy
+          );
+
+        allow update: if isAdmin()
+          || (
+            isConversationMember(conversationId)
+            && request.resource.data.diff(resource.data)
+              .affectedKeys()
+              .hasOnly(["readBy"])
+            && request.resource.data.readBy is list
+            && request.auth.uid in request.resource.data.readBy
+            && request.resource.data.readBy.hasAll(resource.data.readBy)
+          );
+
+        allow delete: if isAdmin();
+      }
+    }
+
+    // =====================================================
+    // LEGACY TOP-LEVEL CHAT MESSAGES
+    // =====================================================
+
+    function isChatParticipant(data) {
+      return isSignedIn()
+        && data.participant_auth_uids is list
+        && request.auth.uid in data.participant_auth_uids;
+    }
+
+    match /chat_messages/{messageId} {
+      allow get: if isSignedIn()
+        && (
+          isAdmin()
+          || isChatParticipant(resource.data)
+        );
+
+      allow list: if isSignedIn()
+        && (
+          isAdmin()
+          || request.auth.uid in resource.data.participant_auth_uids
+        );
+
+      allow create: if isSignedIn();
+
+      allow update: if isSignedIn()
+        && (
+          isAdmin()
+          || isChatParticipant(resource.data)
+        );
+
       allow delete: if isAdmin();
     }
 
-    // 7. Registration Requests Collection
-    match /registration_requests/{requestId} {
-      allow read: if isAuthenticated() && (
-        resource.data.user_id == request.auth.uid ||
-        resource.data.firebase_uid == request.auth.uid ||
-        isAdmin()
+    // =====================================================
+    // NEW CHAT SYSTEM HELPERS
+    // =====================================================
+
+    function isAdminUid(uid) {
+      return exists(
+        /databases/$(database)/documents/admins/$(uid)
+      )
+      && get(
+        /databases/$(database)/documents/admins/$(uid)
+      ).data.role in ["admin", "Admin", "ADMIN"];
+    }
+
+    function isApprovedEmployeeUid(uid) {
+      return exists(
+        /databases/$(database)/documents/employees/$(uid)
+      )
+      && get(
+        /databases/$(database)/documents/employees/$(uid)
+      ).data.status == "approved";
+    }
+
+    function isNewChatUser(uid) {
+      return exists(
+        /databases/$(database)/documents/chat_users/$(uid)
       );
-      allow create: if isAuthenticated();
-      allow update, delete: if isAdmin();
     }
 
-    // 8. Attendance Photos Metadata
-    match /attendance_photos/{photoId} {
-      allow read: if isAuthenticated() && (
-        resource.data.uploaded_by == request.auth.uid ||
-        resource.data.employee_uid == request.auth.uid ||
-        resource.data.employee_id == request.auth.token.employee_id ||
-        isAdmin()
+    function isEligibleChatUid(uid) {
+      return isNewChatUser(uid)
+        && (
+          isAdminUid(uid)
+          || isApprovedEmployeeUid(uid)
+        );
+    }
+
+    function isNewChatConversationMember(conversationId) {
+      return isSignedIn()
+        && exists(
+          /databases/$(database)/documents/chat_conversations/$(conversationId)
+        )
+        && request.auth.uid in get(
+          /databases/$(database)/documents/chat_conversations/$(conversationId)
+        ).data.memberIds;
+    }
+
+    function validNewChatProfile(data, uid) {
+      return data.uid == uid
+        && data.name is string
+        && data.name.size() <= 100
+        && data.email is string
+        && data.email.size() <= 150
+        && data.photoUrl is string
+        && data.photoUrl.size() <= 2000
+        && data.about is string
+        && data.about.size() <= 150
+        && data.accountStatus == "active";
+    }
+
+    // =====================================================
+    // NEW CHAT USERS
+    // =====================================================
+
+    match /chat_users/{uid} {
+      allow get, list: if isSignedIn()
+        && (
+          request.auth.uid == uid
+          || isAdmin()
+          || canBrowseChatDirectory()
+        );
+
+      allow create: if isSignedIn()
+        && (
+          isAdmin()
+          || (
+            request.auth.uid == uid
+            && validNewChatProfile(request.resource.data, uid)
+          )
+        );
+
+      allow update: if isSignedIn()
+        && (
+          isAdmin()
+          || (
+            request.auth.uid == uid
+            && request.resource.data.uid == resource.data.uid
+            && request.resource.data.accountStatus == resource.data.accountStatus
+            && request.resource.data.diff(resource.data)
+              .affectedKeys()
+              .hasOnly([
+                "name",
+                "photoUrl",
+                "about",
+                "updatedAt"
+              ])
+            && request.resource.data.name is string
+            && request.resource.data.name.size() <= 100
+            && request.resource.data.photoUrl is string
+            && request.resource.data.photoUrl.size() <= 2000
+            && request.resource.data.about is string
+            && request.resource.data.about.size() <= 150
+          )
+        );
+
+      allow delete: if isAdmin();
+    }
+
+    // =====================================================
+    // NEW CHAT CONVERSATIONS
+    // =====================================================
+
+    match /chat_conversations/{conversationId} {
+
+      allow get: if isSignedIn()
+        && (
+          isAdmin()
+          ||
+          (
+            resource == null
+            && canBrowseChatDirectory()
+            && isNewChatUser(request.auth.uid)
+          )
+          ||
+          (
+            resource != null
+            && resource.data.memberIds is list
+            && request.auth.uid in resource.data.memberIds
+          )
+        );
+
+      allow list: if isSignedIn()
+        && (
+          isAdmin()
+          || request.auth.uid in resource.data.memberIds
+        );
+
+      // CREATE DIRECT OR GROUP CONVERSATIONS
+      allow create: if isSignedIn()
+        && (
+          isAdmin()
+          ||
+          (
+            canBrowseChatDirectory()
+            && isNewChatUser(request.auth.uid)
+            && request.resource.data.conversationId == conversationId
+            && request.resource.data.memberIds is list
+            && request.resource.data.memberIds.size() >= 2
+            && request.resource.data.memberIds.size() <= 100
+            && request.auth.uid in request.resource.data.memberIds
+          )
+        );
+
+      allow update: if isSignedIn()
+        && (
+          isAdmin()
+          ||
+          (
+            resource.data.memberIds is list
+            && request.auth.uid in resource.data.memberIds
+          )
+        );
+
+      // READ RECEIPTS
+      allow update: if (
+        isSignedIn()
+        && resource.data.memberIds is list
+        && request.auth.uid in resource.data.memberIds
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly(["unreadCounts", "lastReadAt"])
+        && resource.data.unreadCounts is map
+        && request.resource.data.unreadCounts is map
+        && resource.data.lastReadAt is map
+        && request.resource.data.lastReadAt is map
+        && request.resource.data.unreadCounts.keys()
+          .hasOnly(resource.data.memberIds)
+        && request.resource.data.unreadCounts.keys()
+          .hasAll(resource.data.memberIds)
+        && request.resource.data.unreadCounts.diff(
+          resource.data.unreadCounts
+        ).affectedKeys().hasOnly([request.auth.uid])
+        && request.resource.data.lastReadAt.diff(
+          resource.data.lastReadAt
+        ).affectedKeys().hasOnly([request.auth.uid])
+        && request.resource.data.unreadCounts[request.auth.uid] == 0
+        && request.resource.data.lastReadAt[request.auth.uid] is timestamp
       );
-      allow create: if isAuthenticated();
-      allow update, delete: if isAdmin();
-    }
 
-    // 9. Leaves Collection (Top-Level & Mobile Subcollection hierarchy)
-    match /leaves/{leaveId} {
-      allow read: if isAuthenticated() && (
-        resource.data.employee_id == request.auth.token.employee_id ||
-        resource.data.firebase_uid == request.auth.uid ||
-        isAdmin()
+      // MESSAGE METADATA UPDATES
+      allow update: if (
+        isSignedIn()
+        && request.auth.uid in resource.data.memberIds
+        && request.resource.data.memberIds == resource.data.memberIds
+        && request.resource.data.type == resource.data.type
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            "lastMessage",
+            "lastMessageType",
+            "lastMessageAt",
+            "lastMessageTime",
+            "lastSenderId",
+            "unreadCounts",
+            "updatedAt",
+            "lastReadAt"
+          ])
+        && request.resource.data.lastMessage is string
+        && request.resource.data.lastMessage.size() <= 5000
+        && request.resource.data.lastMessageType
+          in ["text", "image", "document"]
+        && request.resource.data.lastMessageAt is timestamp
+        && request.resource.data.lastSenderId == request.auth.uid
+        && request.resource.data.unreadCounts is map
+        && request.resource.data.unreadCounts.keys()
+          .hasOnly(resource.data.memberIds)
+        && request.resource.data.unreadCounts.keys()
+          .hasAll(resource.data.memberIds)
+        && request.resource.data.unreadCounts[request.auth.uid] == 0
       );
-      allow create: if isAuthenticated();
-      allow update, delete: if isAdmin();
-    }
-    match /leaves/{userId}/requests/{requestId} {
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      allow create: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      allow update, delete: if isAdmin();
-    }
-    match /{path=**}/requests/{requestId} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+
+      // GROUP MEMBER MANAGEMENT
+      allow update: if (
+        isSignedIn()
+        && resource.data.type == "group"
+        && resource.data.memberIds is list
+        && resource.data.adminIds is list
+        && (
+          request.auth.uid == resource.data.createdBy
+          || request.auth.uid in resource.data.adminIds
+        )
+        && request.resource.data.memberIds is list
+        && request.resource.data.memberIds.size() >= 2
+        && request.resource.data.memberIds.size() <= 100
+        && (
+          (
+            request.resource.data.memberIds.size()
+              > resource.data.memberIds.size()
+            && request.resource.data.memberIds.hasAll(
+              resource.data.memberIds
+            )
+          )
+          ||
+          (
+            request.resource.data.memberIds.size()
+              < resource.data.memberIds.size()
+            && resource.data.memberIds.hasAll(
+              request.resource.data.memberIds
+            )
+          )
+        )
+        && request.resource.data.memberIds.hasAll(resource.data.adminIds)
+        && request.resource.data.memberIds.hasAll([resource.data.createdBy])
+        && request.resource.data.type == resource.data.type
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.adminIds == resource.data.adminIds
+        && request.resource.data.groupName == resource.data.groupName
+        && request.resource.data.groupImage == resource.data.groupImage
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly(["memberIds", "unreadCounts", "updatedAt"])
+        && request.resource.data.unreadCounts is map
+        && request.resource.data.unreadCounts.keys()
+          .hasOnly(request.resource.data.memberIds)
+        && request.resource.data.unreadCounts.keys()
+          .hasAll(request.resource.data.memberIds)
+        && request.resource.data.updatedAt is timestamp
+      );
+
+      // CREATOR-ONLY ADMIN ROLE MANAGEMENT
+      allow update: if (
+        isSignedIn()
+        && request.auth.uid == resource.data.createdBy
+        && resource.data.type == "group"
+        && request.resource.data.type == "group"
+        && request.resource.data.memberIds == resource.data.memberIds
+        && request.resource.data.memberIds is list
+        && request.resource.data.adminIds is list
+        && request.resource.data.adminIds.hasAll([resource.data.createdBy])
+        && request.resource.data.memberIds.hasAll(request.resource.data.adminIds)
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.groupName == resource.data.groupName
+        && request.resource.data.groupImage == resource.data.groupImage
+        && request.resource.data.diff(resource.data)
+          .affectedKeys().hasOnly(["adminIds", "updatedAt"])
+        && request.resource.data.updatedAt is timestamp
+        && (
+          (
+            request.resource.data.adminIds.size()
+              == resource.data.adminIds.size() + 1
+            && request.resource.data.adminIds.hasAll(resource.data.adminIds)
+          )
+          ||
+          (
+            request.resource.data.adminIds.size()
+              == resource.data.adminIds.size() - 1
+            && resource.data.adminIds.hasAll(request.resource.data.adminIds)
+          )
+        )
+      );
+
+      // GROUP NAME AND PHOTO EDITING
+      allow update: if (
+        isSignedIn()
+        && resource.data.type == "group"
+        && (
+          request.auth.uid == resource.data.createdBy
+          || (
+            resource.data.adminIds is list
+            && request.auth.uid in resource.data.adminIds
+          )
+        )
+        && request.resource.data.memberIds == resource.data.memberIds
+        && request.resource.data.adminIds == resource.data.adminIds
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.type == resource.data.type
+        && request.resource.data.groupName is string
+        && request.resource.data.groupName.size() > 0
+        && request.resource.data.groupName.size() <= 100
+        && request.resource.data.groupPhotoUrl is string
+        && request.resource.data.groupPhotoUrl.size() <= 2000
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly(["groupName", "groupPhotoUrl", "updatedAt"])
+        && request.resource.data.updatedAt is timestamp
+      );
+
+      // =====================================================
+      // NEW CHAT MESSAGE SUBCOLLECTION
+      // =====================================================
+
+      match /messages/{messageId} {
+
+        // LOAD MESSAGES
+        allow get, list: if isSignedIn()
+          && (
+            isAdmin()
+            || isNewChatConversationMember(conversationId)
+          );
+
+        // SEND MESSAGES
+        allow create: if isSignedIn()
+          && (
+            isAdmin()
+            ||
+            (
+              isNewChatConversationMember(conversationId)
+              && request.resource.data.senderId == request.auth.uid
+              && request.resource.data.conversationId == conversationId
+            )
+          );
+
+        // UPDATE READ RECEIPTS, EDIT, AND SOFT DELETE
+        allow update: if isSignedIn()
+          && (
+            isAdmin()
+            || isNewChatConversationMember(conversationId)
+          );
+
+        allow delete: if isAdmin();
+      }
+
+      allow delete: if false;
     }
 
-    // 10. Holidays & Meetings & Teams
-    match /holidays/{holidayId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
-    }
-    match /meetings/{meetingId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
-    }
-    match /teams/{teamId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
-    }
+    // =====================================================
+    // NEW CHAT MESSAGES - LEGACY TOP-LEVEL COLLECTION
+    // =====================================================
 
-    // 11. Work Assignments
-    match /workAssignments/{assignmentId} {
-      allow read: if isAuthenticated();
-      allow create, delete: if isAdmin();
-      allow update: if isAuthenticated();
-    }
-    match /assignments/{assignmentId} {
-      allow read: if isAuthenticated();
-      allow create, delete: if isAdmin();
-      allow update: if isAuthenticated();
-    }
-    match /work_assignments/{assignmentId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
-    }
+    match /chatnew_messages/{messageId} {
 
-    // 12. Work Updates (Mobile & Web)
-    match /work_updates/{updateId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
+      function isChatNewConversationMember(conversationId) {
+        return isSignedIn()
+          && exists(
+            /databases/$(database)/documents/chat_conversations/$(conversationId)
+          )
+          && (
+            isAdmin()
+            || request.auth.uid in get(
+              /databases/$(database)/documents/chat_conversations/$(conversationId)
+            ).data.memberIds
+          );
+      }
+
+      allow get, list: if isSignedIn()
+        && (
+          isAdmin()
+          || isChatNewConversationMember(resource.data.conversationId)
+        );
+
+      allow create: if isSignedIn();
+
       allow update, delete: if isAdmin();
     }
-    match /workUpdates/{userId}/dailyUpdates/{updateId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      allow update, delete: if isAdmin();
-    }
-    match /{path=**}/dailyUpdates/{updateId} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+
+    // =====================================================
+    // CHAT PRESENCE
+    // =====================================================
+
+    match /chat_presence/{uid} {
+      allow get: if isSignedIn()
+        && (
+          request.auth.uid == uid
+          || canBrowseChatDirectory()
+        );
+
+      allow list: if canBrowseChatDirectory();
+
+      allow create, update: if isSignedIn()
+        && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.keys().hasOnly([
+          "uid",
+          "online",
+          "lastSeen",
+          "updatedAt",
+          "typing",
+          "typingConversationId"
+        ])
+        && request.resource.data.online is bool
+        && request.resource.data.typing is bool
+        && request.resource.data.typingConversationId is string;
+
+      allow delete: if false;
     }
 
-    // 13. Audit Logs Collection (Immutable audit trail)
-    match /audit_logs/{logId} {
-      allow read: if isAdmin();
-      allow create: if isAuthenticated();
-      allow update, delete: if false;
+    // =====================================================
+    // CHAT NOTIFICATIONS
+    // =====================================================
+
+    match /chat_notifications/{notificationId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // =====================================================
+    // PER-USER CHAT INBOX SETTINGS
+    // =====================================================
+
+    match /chat_user_inbox/{uid}/items/{conversationId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // =====================================================
+    // PER-USER CLEARED CHAT HISTORY
+    // =====================================================
+
+    match /chat_user_cleared/{uid}/conversations/{conversationId} {
+      allow read, write: if isSignedIn()
+        && (
+          isAdmin()
+          || request.auth.uid == uid
+        );
+    }
+
+    // =====================================================
+    // TEAM LEADER PORTAL (NEW REQUIRED TABLES)
+    // =====================================================
+
+    // 1. Team Leaders Collection
+    match /team_leaders/{leaderId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 2. Projects Collection
+    match /projects/{projectId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 3. Project Tasks & Tasks Collection
+    match /project_tasks/{taskId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /tasks/{taskId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 4. Employee Daily Updates & Standups
+    match /employee_daily_updates/{updateId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 5. Team Leader Reviews Queue
+    match /team_leader_reviews/{reviewId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 6. Team Leader Performance Metrics
+    match /team_leader_performance/{perfId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 7. Employee Notifications
+    match /employee_notifications/{notifId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // =====================================================
+    // PROJECT HR LEAD PORTAL (NEW REQUIRED TABLES)
+    // =====================================================
+
+    // 8. Project Milestones & Deliverables
+    match /project_milestones/{milestoneId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 9. Project Resource & Staff Allocations
+    match /project_allocations/{allocationId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 10. Project HR Reports & Health Audits
+    match /project_reports/{reportId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 11. Project HR Activity & Audit Logs
+    match /project_audit_logs/{logId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // =====================================================
+    // DEFAULT DENY
+    // =====================================================
+
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

@@ -102,6 +102,7 @@ export default function AppRoutes() {
       <Route element={<TeamLeaderProtectedRoute />}>
         <Route path="/teamlead" element={<TeamLeaderLayout />} />
         <Route path="/teamlead/dashboard" element={<TeamLeaderLayout />} />
+        <Route path="/teamlead/chat" element={<TeamLeaderLayout />} />
       </Route>
 
       {/* Project & Operations HR Portal Routes */}

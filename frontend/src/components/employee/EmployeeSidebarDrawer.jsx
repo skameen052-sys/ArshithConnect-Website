@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import BrandLogo from '../common/BrandLogo';
 import { chatService } from '../../services/chatService';
+import api from '../../services/api';
 
 /**
  * EmployeeSidebarDrawer - Left-side slide-over navigation drawer
@@ -30,6 +31,74 @@ import { chatService } from '../../services/chatService';
 export default function EmployeeSidebarDrawer({ isOpen, onClose }) {
   const navigate = useNavigate();
   const location = useLocation();
+
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('arshith_user')) || null;
+    } catch {
+      return null;
+    }
+  });
+  const [avatarImgError, setAvatarImgError] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // Sync user from localStorage & fetch fresh profile from API
+  useEffect(() => {
+    let isMounted = true;
+    const syncUser = () => {
+      try {
+        const u = JSON.parse(localStorage.getItem('arshith_user')) || null;
+        if (isMounted) setCurrentUser(u);
+      } catch {}
+    };
+
+    const fetchFreshProfile = async () => {
+      try {
+        const token = localStorage.getItem('arshith_auth_token');
+        if (!token) return;
+        const res = await api.get('/api/employees/me');
+        if (res.data && isMounted) {
+          setCurrentUser((prev) => {
+            const merged = { ...(prev || {}), ...res.data };
+            try {
+              localStorage.setItem('arshith_user', JSON.stringify(merged));
+            } catch {}
+            return merged;
+          });
+        }
+      } catch {
+        // Fall back quietly to local storage
+      }
+    };
+
+    syncUser();
+    fetchFreshProfile();
+
+    window.addEventListener('storage', syncUser);
+    window.addEventListener('arshith_user_updated', syncUser);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('storage', syncUser);
+      window.removeEventListener('arshith_user_updated', syncUser);
+    };
+  }, [isOpen]);
+
+  const userPhoto = (
+    currentUser?.photoUrl ||
+    currentUser?.profile_photo ||
+    currentUser?.profilePhoto ||
+    currentUser?.photo_url ||
+    currentUser?.avatar ||
+    ''
+  );
+
+  useEffect(() => {
+    setAvatarImgError(false);
+  }, [userPhoto]);
+
+  const employeeName = currentUser?.name || currentUser?.fullName || 'Employee';
+  const employeeId = currentUser?.employeeId || currentUser?.id || 'AFI-001';
+  const designation = currentUser?.designation || currentUser?.role || 'Staff Member';
 
   // Close on Escape key
   useEffect(() => {
@@ -53,17 +122,6 @@ export default function EmployeeSidebarDrawer({ isOpen, onClose }) {
       document.body.style.overflow = '';
     };
   }, [isOpen]);
-
-  const storedUser = (() => {
-    try {
-      return JSON.parse(localStorage.getItem('arshith_user')) || null;
-    } catch {
-      return null;
-    }
-  })();
-  const employeeName = storedUser?.name || 'Employee';
-  const employeeId = storedUser?.employeeId || 'AFI-001';
-  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
     let isMounted = true;
@@ -89,6 +147,7 @@ export default function EmployeeSidebarDrawer({ isOpen, onClose }) {
   // Canonical employee nav items with Sprints, Tasks, and HRMS extensions
   const navItems = [
     { label: 'Dashboard', path: '/employee/dashboard', icon: Home },
+    { label: 'Daily Work Updates', path: '/employee/updates', icon: FileClock },
     { label: 'Assigned Tasks', path: '/employee/assignments?tab=tasks', icon: Briefcase },
     { label: 'Deadlines & Sprints', path: '/employee/assignments?tab=deadlines', icon: Clock },
     { label: 'Submit Daily Work', path: '/employee/assignments?tab=daily-work', icon: Send },
@@ -146,13 +205,43 @@ export default function EmployeeSidebarDrawer({ isOpen, onClose }) {
         </div>
 
         {/* Profile Card */}
-        <div className="employee-drawer-profile-card">
-          <div className="drawer-user-avatar">
-            {employeeName.charAt(0).toUpperCase()}
+        <div
+          className="employee-drawer-profile-card"
+          onClick={() => handleNavigate('/employee/profile')}
+          style={{ cursor: 'pointer' }}
+          title={`${employeeName} (${employeeId}) - View Profile`}
+        >
+          <div
+            className="drawer-user-avatar"
+            style={{
+              overflow: 'hidden',
+              position: 'relative',
+              backgroundColor: '#0b3d2b',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {userPhoto && !avatarImgError ? (
+              <img
+                src={userPhoto}
+                alt={employeeName}
+                onError={() => setAvatarImgError(true)}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  borderRadius: '10px',
+                  display: 'block',
+                }}
+              />
+            ) : (
+              <span>{employeeName.charAt(0).toUpperCase()}</span>
+            )}
           </div>
           <div className="drawer-user-meta">
             <div className="drawer-user-name">{employeeName}</div>
-            <div className="drawer-user-id">{employeeId} &bull; Staff Member</div>
+            <div className="drawer-user-id">{employeeId} &bull; {designation}</div>
           </div>
         </div>
 

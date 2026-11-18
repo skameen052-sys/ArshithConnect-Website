@@ -3,15 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { LogOut, MessageSquare, Briefcase } from 'lucide-react';
 import BrandLogo from '../common/BrandLogo';
 import { chatService } from '../../services/chatService';
+import authService from '../../services/authService';
 
 export default function TeamLeaderNavbar({ onToggleSidebar }) {
   const navigate = useNavigate();
   const [unreadCount, setUnreadCount] = useState(0);
 
   const handleLogout = useCallback(() => {
-    localStorage.removeItem('arshith_role');
-    localStorage.removeItem('arshith_user');
-    localStorage.removeItem('arshith_auth_token');
+    authService.logout();
     navigate('/teamlead/login');
   }, [navigate]);
 
@@ -38,8 +37,10 @@ export default function TeamLeaderNavbar({ onToggleSidebar }) {
       return null;
     }
   })();
+  const [imgError, setImgError] = useState(false);
   const tlName = storedUser?.name || storedUser?.fullName || 'Team Leader';
   const tlEmail = storedUser?.email || 'teamlead@arshith.com';
+  const tlPhoto = storedUser?.photoUrl || storedUser?.profile_photo || storedUser?.profilePhoto || storedUser?.avatar || '';
 
   return (
     <header className="portal-navbar">
@@ -64,6 +65,7 @@ export default function TeamLeaderNavbar({ onToggleSidebar }) {
       >
         <BrandLogo size="medium" />
         <span
+          className="tl-navbar-role-pill"
           style={{
             display: 'inline-flex',
             alignItems: 'center',
@@ -87,7 +89,7 @@ export default function TeamLeaderNavbar({ onToggleSidebar }) {
         {/* Teams Chat Button with Floating Badge */}
         <button
           type="button"
-          onClick={() => navigate('/employee/chat')}
+          onClick={() => navigate('/teamlead/chat')}
           className="navbar-team-chat-btn"
           title={`Teams Chat${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`}
           aria-label="Teams Chat"
@@ -101,8 +103,12 @@ export default function TeamLeaderNavbar({ onToggleSidebar }) {
         </button>
 
         <div className="user-profile-badge" title={`${tlName} (${tlEmail})`}>
-          <div className="user-avatar" style={{ backgroundColor: '#0b3d2b' }}>
-            {tlName.charAt(0).toUpperCase()}
+          <div className="user-avatar" style={{ backgroundColor: '#0b3d2b', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {tlPhoto && !imgError ? (
+              <img src={tlPhoto} alt={tlName} onError={() => setImgError(true)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              tlName.charAt(0).toUpperCase()
+            )}
           </div>
           <div className="user-info-text">
             <div className="user-name">{tlName}</div>

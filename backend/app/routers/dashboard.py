@@ -15,12 +15,12 @@ from app.models.assignment import WorkAssignment
 from app.models.employee import Employee
 from app.models.user import User
 from app.dependencies.auth import get_current_user, get_current_admin, get_current_employee
-from app.routers.attendance import format_attendance_response
+from app.routers.attendance import format_attendance_response, _parse_time_str
 from app.routers.meetings import format_meeting_response
 from app.routers.announcements import format_announcement_response
 from app.routers.assignments import format_assignment_response
 from app.services.firestore_service import FirestoreService
-from app.services.attendance_service import get_attendance_today
+from app.services.attendance_service import get_attendance_today, get_daily_attendance_metrics
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboards"])
 
@@ -37,16 +37,20 @@ def get_admin_dashboard(
     admin_id = getattr(admin_user, "id", 1)
 
     if settings.DATABASE_BACKEND == "firebase":
-        # 1. Today's attendance records from Firestore
-        today_records = FirestoreService.query("attendance", {"date": today_iso})
-        total_present = len([r for r in today_records if r.get("status") in ["Present", "Late", "Completed"]])
-        wfo_count = len([r for r in today_records if r.get("work_mode") == "WFO" and r.get("status") in ["Present", "Late", "Completed"]])
-        wfh_count = len([r for r in today_records if r.get("work_mode") == "WFH" and r.get("status") in ["Present", "Late", "Completed"]])
-        late_count = len([r for r in today_records if r.get("is_late") or r.get("status") == "Late"])
+        # 1. Authoritative today's attendance metrics computed live across Cloud Firestore & local cache
+        daily_metrics = get_daily_attendance_metrics(today_iso)
+        total_present = daily_metrics.get("totalPresent", 0)
+        wfo_count = daily_metrics.get("wfo", 0)
+        wfh_count = daily_metrics.get("wfh", 0)
+        late_count = daily_metrics.get("late", 0)
+        today_records = daily_metrics.get("records", [])
 
-        # 2. Pending leaves
+        # 2. Pending leaves across leaves collection and requests subcollection
         leaves = FirestoreService.list_all("leaves")
-        pending_leaves = len([l for l in leaves if str(l.get("status", "")).strip().lower() == "pending"])
+        cg_reqs = FirestoreService.collection_group("requests")
+        pending_leaves_top = len([l for l in leaves if str(l.get("status", "")).strip().lower() == "pending"])
+        pending_leaves_cg = len([r for r in cg_reqs if str(r.get("status", "")).strip().lower() == "pending"])
+        pending_leaves = max(pending_leaves_top, pending_leaves_cg)
 
         # 3. This month's holidays
         all_holidays = FirestoreService.list_all("holidays")
@@ -79,7 +83,7 @@ def get_admin_dashboard(
 
         # Admin name
         admin_emps = FirestoreService.query("employees", {"email": admin_email})
-        admin_name = admin_emps[0].get("full_name") if admin_emps else "Administrator"
+        admin_name = admin_emps[0].get("full_name") or admin_emps[0].get("name") if admin_emps else "Administrator"
 
         return {
             "adminName": admin_name,
@@ -174,8 +178,8 @@ def get_employee_dashboard(
         today_status = {
             "isCheckedIn": is_checked_in,
             "isCompleted": is_completed,
-            "checkInTime": att.get("check_in_time") if att else "--",
-            "checkOutTime": att.get("check_out_time") if att else "--",
+            "checkInTime": _parse_time_str(att.get("check_in_time") or att.get("checkIn") or att.get("check_in_timestamp")) if att else "--",
+            "checkOutTime": _parse_time_str(att.get("check_out_time") or att.get("checkOut") or att.get("check_out_timestamp")) if att else "--",
             "workMode": att.get("work_mode", "WFO") if att else "WFO",
             "workingDuration": att.get("duration", "--") if att else "--",
             "status": status_display,
@@ -249,8 +253,8 @@ def get_employee_dashboard(
     today_status = {
         "isCheckedIn": is_checked_in,
         "isCompleted": is_completed,
-        "checkInTime": att.check_in_time if att else "--",
-        "checkOutTime": att.check_out_time if att else "--",
+        "checkInTime": _parse_time_str(att.check_in_time) if (att and att.check_in_time) else "--",
+        "checkOutTime": _parse_time_str(att.check_out_time) if (att and att.check_out_time) else "--",
         "workMode": att.work_mode if att else "--",
         "workingDuration": att.duration if att else "--",
         "status": status_display,

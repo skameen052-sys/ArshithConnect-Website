@@ -14,7 +14,7 @@ export const teamService = {
     }
   },
 
-  async createTeam({ teamName, department = 'Operations', description = '', leader = null, members = [] }) {
+  async createTeam({ teamName, department = 'Operations', description = '', leader = null, members = [], memberIds = [], syncToChat = null, source = null }) {
     try {
       const response = await api.post('/api/teams', {
         teamName,
@@ -22,6 +22,9 @@ export const teamService = {
         description,
         leader,
         members,
+        memberIds,
+        sync_to_chat: syncToChat,
+        source,
       });
       return response.data;
     } catch (error) {

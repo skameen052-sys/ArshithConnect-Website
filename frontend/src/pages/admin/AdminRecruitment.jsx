@@ -440,7 +440,7 @@ export default function AdminRecruitment() {
 
       {/* Jobs View */}
       {activeTab === 'JOBS' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 320px), 1fr))', gap: '1rem' }}>
           {jobs.map((j) => (
             <div key={j.id || j._firestore_id} className="hrms-card" style={{ marginBottom: 0 }}>
               <div className="hrms-card-body">

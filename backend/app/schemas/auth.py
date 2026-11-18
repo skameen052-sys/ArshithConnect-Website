@@ -27,7 +27,7 @@ class RegisterRequest(BaseModel):
 
 
 class UserProfileResponse(BaseModel):
-    id: int
+    id: Any
     email: str
     role: str
     name: str
@@ -36,8 +36,12 @@ class UserProfileResponse(BaseModel):
     designation: Optional[str] = "Employee"
     phone: Optional[str] = "--"
     status: Optional[str] = "Active"
+    profile_photo: Optional[str] = None
+    profilePhoto: Optional[str] = None
+    photoUrl: Optional[str] = None
+    avatar: Optional[str] = None
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="allow")
 
 
 class Token(BaseModel):

@@ -36,7 +36,7 @@ export default function EmployeeMeetings() {
         breadcrumb={[{ label: 'Employee', path: '/employee/dashboard' }, { label: 'Meetings' }]}
       />
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '16px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 320px), 1fr))', gap: '16px' }}>
         {meetings.map((mtg) => (
           <div
             key={mtg.id}

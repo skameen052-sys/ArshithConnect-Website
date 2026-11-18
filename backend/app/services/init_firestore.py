@@ -128,128 +128,17 @@ def init_firestore_seed():
             "updated_at": now_iso,
         })
 
-    # 3. Seed canonical PDF Employee (EMP-1001) and salary structure if missing
-    from app.services.firestore_service import FirestoreService
-    emp_1001 = FirestoreService.query("employees", {"employee_id": "EMP-1001"})
-    if not emp_1001:
-        logger.info("Seeding canonical PDF benchmark employee EMP-1001...")
-        FirestoreService.create("employees", {
-            "employee_id": "EMP-1001",
-            "name": "Arshith Developer",
-            "full_name": "Arshith Developer",
-            "email": "employee@arshith.com",
-            "phone": "+91 98765 43210",
-            "department": "Engineering",
-            "designation": "Full-Stack Software Engineer",
-            "joining_date": "2024-01-15",
-            "employment_type": "Full-time",
-            "status": "Active",
-            "location": "HQ Office",
-            "bank_name": "HDFC Bank",
-            "account_number": "50100456789123",
-            "pan_number": "ABCDE1234F",
-            "uan_number": "100987654321",
-            "created_at": now_iso,
-            "updated_at": now_iso,
-        }, doc_id="EMP-1001")
+    # 3. Canonical PDF Employee (EMP-1001) seeding disabled (sample data removed)
+    # 4. Canonical performance appraisal for EMP-1001 disabled (sample data removed)
+    # 5. Canonical performance goals for EMP-1001 disabled (sample data removed)
 
-    # Ensure EMP-1001 has canonical salary structure (Basic 20k, HRA 8k, Other 4k = Gross 32k)
-    structs = FirestoreService.query("salary_structures", {"employee_id": "EMP-1001"})
-    if not structs:
-        logger.info("Seeding canonical salary structure for EMP-1001...")
-        FirestoreService.create("salary_structures", {
-            "employee_id": "EMP-1001",
-            "basic_salary": 20000.0,
-            "hra": 8000.0,
-            "other_allowances": 4000.0,
-            "gross_salary": 32000.0,
-            "pf_applicable": True,
-            "pf_wage_base": 18000.0,
-            "esi_applicable": False,
-            "professional_tax": 200.0,
-            "tds_monthly": 0.0,
-            "effective_date": "2026-01-01",
-            "is_active": True,
-            "created_at": now_iso,
-        })
-
-    # 4. Seed sample performance appraisal review for EMP-1001 if missing
-    reviews = FirestoreService.query("performance_reviews", {"employee_id": "EMP-1001"})
-    if not reviews:
-        logger.info("Seeding canonical performance appraisal for EMP-1001...")
-        FirestoreService.create("performance_reviews", {
-            "employee_id": "EMP-1001",
-            "review_period": "Annual Review 2026",
-            "rating": 4.8,
-            "strengths": "Outstanding software architecture, high attention to detail in payroll calculations, and exceptional full-stack problem solving skills.",
-            "areas_for_improvement": "Continue mentoring newer team members and expanding technical design documentation.",
-            "manager_feedback": "Arshith has demonstrated stellar technical ownership in architecting the automated payroll and HRMS suite. Recommended for leadership fast-track.",
-            "recommended_increment_pct": 15.0,
-            "evaluated_by": "admin@arshith.com",
-            "evaluated_at": now_iso,
-            "created_at": now_iso,
-            "updated_at": now_iso,
-        })
-
-    # 5. Seed performance goals for EMP-1001 if missing
-    goals = FirestoreService.query("performance_goals", {"employee_id": "EMP-1001"})
-    if not goals:
-        logger.info("Seeding canonical performance goals for EMP-1001...")
-        FirestoreService.create("performance_goals", {
-            "employee_id": "EMP-1001",
-            "title": "Automated Attendance-Driven Payroll Engine",
-            "description": "Achieve 100% mathematical precision on attendance-driven LOP, PF, ESI and corporate payment file exports.",
-            "target_date": "2026-11-30",
-            "weightage": 40.0,
-            "progress": 95.0,
-            "status": "IN_PROGRESS",
-            "created_by": "admin@arshith.com",
-            "created_at": now_iso,
-            "updated_at": now_iso,
-        })
-        FirestoreService.create("performance_goals", {
-            "employee_id": "EMP-1001",
-            "title": "Pixel-Perfect ReportLab Payslip & Statement Generator",
-            "description": "Implement branded high-fidelity PDF payslips and Full-and-Final settlement statements.",
-            "target_date": "2026-12-15",
-            "weightage": 30.0,
-            "progress": 100.0,
-            "status": "COMPLETED",
-            "created_by": "admin@arshith.com",
-            "created_at": now_iso,
-            "updated_at": now_iso,
-        })
-        FirestoreService.create("performance_goals", {
-            "employee_id": "EMP-1001",
-            "title": "Employee Self-Service & Appraisal Transparency",
-            "description": "Provide employees with direct transparency into their appraisal ratings, manager feedback, and payslips.",
-            "target_date": "2026-12-31",
-            "weightage": 30.0,
-            "progress": 90.0,
-            "status": "IN_PROGRESS",
-            "created_by": "admin@arshith.com",
-            "created_at": now_iso,
-            "updated_at": now_iso,
-        })
-
-    # 6. Seed Default Teams & Welcome Chat Message for Microsoft Teams experience
+    # 6. Seed Default Teams (General & Company-Wide default group removed)
     existing_teams = firestore_service.list_documents("teams")
     if not existing_teams:
         logger.info("Seeding default enterprise teams for collaborative chat...")
         all_emps = firestore_service.list_documents("employees")
         emp_names = [e.get("full_name") or e.get("name") for e in all_emps if e.get("full_name") or e.get("name")]
         sample_members = emp_names[:8] if emp_names else ["Administrator"]
-
-        team_general_id = firestore_service.create_document("teams", {
-            "name": "General & Company-Wide",
-            "teamName": "General & Company-Wide",
-            "department": "Company",
-            "description": "Company-wide general discussions, announcements, and open chatter.",
-            "leader": "Administrator",
-            "members": emp_names if emp_names else ["Administrator"],
-            "created_at": now_iso,
-            "updated_at": now_iso,
-        })
 
         team_ops_id = firestore_service.create_document("teams", {
             "name": "Operations Core",
@@ -272,28 +161,6 @@ def init_firestore_seed():
             "created_at": now_iso,
             "updated_at": now_iso,
         })
-
-        # Seed initial welcome message in General team
-        existing_msgs = firestore_service.list_documents("chat_messages")
-        if not existing_msgs:
-            firestore_service.create_document("chat_messages", {
-                "chat_type": "team",
-                "target_id": str(team_general_id),
-                "team_id": str(team_general_id),
-                "team_name": "General & Company-Wide",
-                "sender_id": "ADM-001",
-                "sender_name": "Administrator",
-                "sender_role": "admin",
-                "sender_avatar": "A",
-                "receiver_id": str(team_general_id),
-                "content": "👋 Welcome to **Arshith Connect Teams Chat**! You can chat directly with any individual employee or collaborate seamlessly in team channels.",
-                "attachments": [],
-                "reactions": {"🎉": ["ADM-001"]},
-                "is_pinned": True,
-                "read_by": ["ADM-001"],
-                "created_at": now_iso,
-                "updated_at": now_iso,
-            })
 
     # 1B. Ensure Default HR User exists
     hr_email = "hr@arshith.com"
@@ -457,97 +324,168 @@ def init_firestore_seed():
             sch["id"] = sch["schedule_id"]
             firestore_service.create_document("work_schedules", sch)
 
-    # 10. Seed canonical employee loans & advances if missing
-    existing_loans = firestore_service.list_documents("employee_loans")
-    if not existing_loans:
-        logger.info("Seeding default employee loans & salary advances in Firestore...")
-        sample_loans = [
+    # 10. Employee loans & salary advances (sample data removed)
+    # 11. Canonical payslips & payslip requests (sample data removed)
+
+    # 12. Ensure Default Team Leaders exist
+    existing_tls = firestore_service.list_documents("team_leaders")
+    if not existing_tls:
+        logger.info("Seeding default team leaders in Firestore...")
+        hashed_tl_pw = get_password_hash("TeamLead@123")
+        default_tls = [
             {
-                "id": "LOAN-001",
-                "employee_id": "EMP-1001",
-                "employee_name": "Arshith",
-                "employee_email": "employee@arshith.com",
-                "department": "Engineering",
-                "loan_type": "Salary Advance",
-                "principal_amount": 25000.0,
-                "term_months": 3,
-                "monthly_emi": 8333.33,
-                "remaining_balance": 16666.67,
-                "paid_installments": 1,
-                "reason": "Emergency medical expenses",
-                "status": "APPROVED",
-                "disbursed_at": now_iso,
+                "id": "7856",
+                "team_leader_id": "7856",
+                "full_name": "rajesh",
+                "name": "rajesh",
+                "email": "rajesh@leadarshith.com",
+                "department": "Operations",
+                "specialization": "Technical Lead",
+                "experience_years": "3+ Years",
+                "hashed_password": hashed_tl_pw,
+                "role": "team_leader",
+                "approval_status": "APPROVED",
+                "is_active": True,
+                "registered_at": now_iso,
                 "created_at": now_iso,
                 "updated_at": now_iso,
             },
             {
-                "id": "LOAN-002",
-                "employee_id": "EMP-1001",
-                "employee_name": "Arshith",
-                "employee_email": "employee@arshith.com",
+                "id": "5230",
+                "team_leader_id": "5230",
+                "full_name": "phani",
+                "name": "phani",
+                "email": "phani@leadarshtih.com",
                 "department": "Engineering",
-                "loan_type": "Equipment Advance",
-                "principal_amount": 15000.0,
-                "term_months": 2,
-                "monthly_emi": 7500.0,
-                "remaining_balance": 15000.0,
-                "paid_installments": 0,
-                "reason": "Home office workstation setup",
-                "status": "PENDING",
+                "specialization": "Technical Lead",
+                "experience_years": "3+ Years",
+                "hashed_password": hashed_tl_pw,
+                "role": "team_leader",
+                "approval_status": "APPROVED",
+                "is_active": True,
+                "registered_at": now_iso,
                 "created_at": now_iso,
                 "updated_at": now_iso,
             },
         ]
-        for l in sample_loans:
-            firestore_service.create_document("employee_loans", l)
+        for tl in default_tls:
+            firestore_service.create_document("team_leaders", tl)
+            existing_user = firestore_service.list_documents("users", [("email", "==", tl["email"])])
+            if not existing_user:
+                firestore_service.create_document("users", {
+                    "id": tl["id"],
+                    "uid": tl["id"],
+                    "email": tl["email"],
+                    "hashed_password": tl["hashed_password"],
+                    "role": "team_leader",
+                    "name": tl["name"],
+                    "team_leader_id": tl["team_leader_id"],
+                    "approval_status": "APPROVED",
+                    "is_active": True,
+                    "created_at": now_iso,
+                    "updated_at": now_iso,
+                })
 
-    # 11. Seed canonical payslips & payslip requests if missing
-    existing_ps = firestore_service.list_documents("payslips")
-    if not existing_ps:
-        logger.info("Seeding default payslips in Firestore...")
-        sample_ps = [
-            {
-                "id": "PS-2026-10-EMP-1001",
-                "employee_id": "EMP-1001",
-                "employee_name": "Arshith",
-                "employee_email": "employee@arshith.com",
-                "month": 10,
-                "year": 2026,
-                "payslip_month": "October 2026",
-                "gross_salary": 65000.0,
-                "total_deductions": 4500.0,
-                "net_salary": 60500.0,
-                "status": "GENERATED",
-                "created_at": now_iso,
-                "updated_at": now_iso,
-            }
-        ]
-        for ps in sample_ps:
-            firestore_service.create_document("payslips", ps)
+    # 13. Ensure Default Projects exist
+    default_projs = [
+        {
+            "id": "PRJ-412119",
+            "project_id": "PRJ-412119",
+            "name": "facial solutions",
+            "title": "facial solutions",
+            "description": "work",
+            "scope": "work",
+            "department": "Operations",
+            "status": "In Progress",
+            "progress": 15,
+            "deadline": "2026-11-10",
+            "team_leader": "rajesh",
+            "team_leader_id": "7856",
+            "team_leader_email": "rajesh@leadarshith.com",
+            "assigned_employees": ["Shaik Ameen"],
+            "staff_count": 1,
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        },
+        {
+            "id": "PRJ-372729",
+            "project_id": "PRJ-372729",
+            "name": "updi",
+            "title": "updi",
+            "description": "scope",
+            "scope": "scope",
+            "department": "Operations",
+            "status": "In Progress",
+            "progress": 0,
+            "deadline": "2026-11-11",
+            "team_leader": "rajesh",
+            "team_leader_id": "7856",
+            "team_leader_email": "rajesh@leadarshith.com",
+            "assigned_employees": ["Shaik Ameen"],
+            "staff_count": 1,
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        },
+    ]
+    for p in default_projs:
+        existing = firestore_service.list_documents("projects", [("project_id", "==", p["project_id"])])
+        if not existing:
+            firestore_service.create_document("projects", p)
 
-    existing_req = firestore_service.list_documents("payslip_requests")
-    if not existing_req:
-        sample_req = [
-            {
-                "id": "REQ-PS-001",
-                "request_code": "REQ-PS-001",
-                "employee_id": "EMP-1001",
-                "employee_name": "Arshith",
-                "employee_email": "employee@arshith.com",
-                "month": 10,
-                "year": 2026,
-                "payslip_month": "October 2026",
-                "reason": "Visa and banking verification",
-                "status": "APPROVED",
-                "created_at": now_iso,
-                "updated_at": now_iso,
-            }
-        ]
-        for r in sample_req:
-            firestore_service.create_document("payslip_requests", r)
-
-    # Project operations, team leaders, project tasks, and work logs are registered
-    # dynamically by verified users through the registration & project assignment workflows.
+    # 14. Ensure Default Project Tasks exist
+    default_tasks = [
+        {
+            "id": "TSK-495837",
+            "task_id": "TSK-495837",
+            "title": "complete work",
+            "description": "test cases",
+            "project_id": "PRJ-412119",
+            "project_name": "facial solutions",
+            "assigned_to": "Shaik Ameen",
+            "assigned_to_id": "AFI-9073",
+            "assigned_to_email": "ameen@arshithgroup.com",
+            "lead": "rajesh",
+            "team_leader": "rajesh",
+            "team_leader_id": "7856",
+            "team_leader_email": "rajesh@leadarshith.com",
+            "status": "SUBMITTED",
+            "review_status": "PENDING",
+            "progress": 85,
+            "priority": "High Priority",
+            "due_date": "2026-11-10",
+            "deadline": "2026-11-10",
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        },
+        {
+            "id": "TSK-495838",
+            "task_id": "TSK-495838",
+            "title": "complete work",
+            "description": "test cases",
+            "project_id": "PRJ-372729",
+            "project_name": "updi",
+            "assigned_to": "Shaik Ameen",
+            "assigned_to_id": "AFI-9073",
+            "assigned_to_email": "ameen@arshithgroup.com",
+            "lead": "rajesh",
+            "team_leader": "rajesh",
+            "team_leader_id": "7856",
+            "team_leader_email": "rajesh@leadarshith.com",
+            "status": "IN_PROGRESS",
+            "progress": 15,
+            "priority": "Medium Priority",
+            "due_date": "2026-11-12",
+            "deadline": "2026-11-12",
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        },
+    ]
+    for t in default_tasks:
+        existing = firestore_service.list_documents("project_tasks", [("task_id", "==", t["task_id"])])
+        if not existing:
+            firestore_service.create_document("project_tasks", t)
+            firestore_service.create_document("tasks", t)
+            firestore_service.create_document("assignments", t)
 
 
 

@@ -49,14 +49,39 @@ def create_access_token(
     return encoded_jwt
 
 
-def decode_access_token(token: str) -> Optional[dict]:
-    """Decode and validate JWT access token."""
+def decode_access_token_status(token: str) -> tuple[Optional[dict], str]:
+    """Decode a local HS256 JWT and distinguish expired vs invalid tokens."""
+    if not token or not isinstance(token, str):
+        return None, "invalid"
     try:
         payload = jwt.decode(
             token,
             settings.SECRET_KEY,
             algorithms=[settings.ALGORITHM],
         )
-        return payload
+        return payload, "valid"
+    except jwt.ExpiredSignatureError:
+        return None, "expired"
     except jwt.PyJWTError:
-        return None
+        return None, "invalid"
+
+
+def decode_access_token(token: str) -> Optional[dict]:
+    """Decode and validate JWT access token."""
+    payload, _ = decode_access_token_status(token)
+    return payload
+
+
+def is_firebase_id_token_format(token: str) -> bool:
+    """
+    Firebase ID tokens are asymmetric (RS256) JWTs carrying a 'kid' header.
+    Local HS256 session tokens do not have a 'kid' claim and must not be sent
+    to Firebase Admin verify_id_token().
+    """
+    if not token or not isinstance(token, str) or token.count(".") != 2:
+        return False
+    try:
+        header = jwt.get_unverified_header(token)
+    except jwt.PyJWTError:
+        return False
+    return bool(header.get("kid")) and header.get("alg") != settings.ALGORITHM

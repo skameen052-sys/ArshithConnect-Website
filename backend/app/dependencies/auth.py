@@ -5,7 +5,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.security import decode_access_token
+from app.core.security import decode_access_token_status, is_firebase_id_token_format
 from app.core.firebase import verify_firebase_token
 from app.db.session import get_db
 from app.services.firestore_service import FirestoreService
@@ -75,25 +75,33 @@ def get_current_user(
     email = None
     token_emp_id = None
 
-    # 1. Attempt decoding as local application JWT
-    payload = decode_access_token(token)
+    # 1. Attempt decoding as local application HS256 JWT
+    payload, token_status = decode_access_token_status(token)
     if payload:
         user_id = payload.get("sub")
         token_role = payload.get("role")
         email = payload.get("email")
         token_emp_id = payload.get("employeeId") or payload.get("employee_id")
-    else:
-        # 2. Attempt decoding as Firebase Authentication ID token
+    elif token_status != "expired" and is_firebase_id_token_format(token):
+        # 2. Only verify RS256/kid tokens as Firebase Authentication ID tokens
         fb_token = verify_firebase_token(token)
         if fb_token:
             user_id = fb_token.get("uid")
             email = fb_token.get("email")
-            token_role = fb_token.get("role") or ("admin" if fb_token.get("admin") else "employee")
+            if fb_token.get("role"):
+                token_role = fb_token.get("role")
+            elif fb_token.get("admin"):
+                token_role = "admin"
 
     if not user_id and not email:
+        detail = (
+            "Your session has expired. Please log in again."
+            if token_status == "expired"
+            else "Authentication token has expired or is invalid"
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication token has expired or is invalid",
+            detail=detail,
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -102,6 +110,36 @@ def get_current_user(
         user_data = None
         clean_email = email.lower().strip() if email else ""
 
+        # Helper to resolve approved/pending records from 'team_leaders' collection
+        def _lookup_team_leader_user(uid: Optional[str], email_addr: str) -> Optional[dict]:
+            tl_doc = FirestoreService.get_by_id("team_leaders", str(uid)) if uid else None
+            if not tl_doc and email_addr:
+                tl_matches = FirestoreService.query("team_leaders", {"email": email_addr})
+                if tl_matches:
+                    tl_doc = tl_matches[0]
+            if not tl_doc and uid:
+                tl_matches = FirestoreService.query("team_leaders", {"team_leader_id": str(uid)})
+                if tl_matches:
+                    tl_doc = tl_matches[0]
+            if not tl_doc:
+                return None
+
+            res = dict(tl_doc)
+            res["role"] = "team_leader"
+            st = str(res.get("approval_status") or ("APPROVED" if res.get("is_active") else "PENDING")).strip().upper()
+            res["approval_status"] = "APPROVED" if st in ("APPROVED", "ACTIVE") else st
+            res["is_active"] = bool(res.get("is_active", res["approval_status"] == "APPROVED"))
+            tl_pk = str(res.get("id") or res.get("_firestore_id") or uid or "")
+            tl_code = str(res.get("team_leader_id") or tl_pk)
+            res["id"] = tl_pk
+            res["uid"] = res.get("uid") or tl_pk
+            res["team_leader_id"] = tl_code
+            res["employee_id"] = tl_code
+            res["employeeId"] = tl_code
+            res["name"] = res.get("full_name") or res.get("name") or "Team Leader"
+            res["fullName"] = res["name"]
+            return res
+
         # A. Search 'users' collection
         if user_id:
             user_data = FirestoreService.get_by_id("users", str(user_id))
@@ -109,6 +147,13 @@ def get_current_user(
             matches = FirestoreService.query("users", {"email": clean_email})
             if matches:
                 user_data = matches[0]
+
+        if str(token_role or "").strip().lower() == "team_leader" and (
+            not user_data or str(user_data.get("role", "")).strip().lower() != "team_leader"
+        ):
+            tl_match = _lookup_team_leader_user(user_id, clean_email)
+            if tl_match:
+                user_data = tl_match
 
         if user_data:
             user_data = dict(user_data)
@@ -156,6 +201,10 @@ def get_current_user(
                 user_data["approval_status"] = "APPROVED"
                 if "id" not in user_data and "_firestore_id" in user_data:
                     user_data["id"] = user_data["_firestore_id"]
+
+        # B2. Search 'team_leaders' collection before falling back to 'employees'
+        if not user_data and token_role in (None, "team_leader"):
+            user_data = _lookup_team_leader_user(user_id, clean_email)
 
         # C. Search authoritative 'employees' collection (where mobile and approved employees reside)
         if not user_data:
@@ -391,6 +440,19 @@ def get_current_employee(
             )
 
         emp_dict = dict(emp_data)
+        photo = (
+            emp_dict.get("photoUrl")
+            or emp_dict.get("photo_url")
+            or emp_dict.get("profile_photo")
+            or emp_dict.get("profilePhoto")
+            or emp_dict.get("avatar")
+            or ""
+        )
+        emp_dict["profile_photo"] = photo
+        emp_dict["profilePhoto"] = photo
+        emp_dict["photoUrl"] = photo
+        emp_dict["photo_url"] = photo
+        emp_dict["avatar"] = photo
         e_id = emp_dict.get("employee_id") or emp_dict.get("employeeId") or (emp_code if emp_code else str(user_id))
         emp_dict["employee_id"] = e_id
         emp_dict["employeeId"] = e_id

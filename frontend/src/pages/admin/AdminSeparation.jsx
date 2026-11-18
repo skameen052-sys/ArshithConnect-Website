@@ -265,7 +265,7 @@ export default function AdminSeparation() {
       <div className="hrms-card">
         <div className="hrms-card-body" style={{ padding: '1rem 1.5rem' }}>
           <div className="hrms-filter-bar" style={{ margin: 0, display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div className="hrms-search-input-wrap" style={{ flex: 1, minWidth: '240px' }}>
+            <div className="hrms-search-input-wrap" style={{ flex: 1, minWidth: 'min(100%, 240px)' }}>
               <Search size={16} />
               <input
                 type="text"
@@ -278,7 +278,7 @@ export default function AdminSeparation() {
 
             <select
               className="hrms-select"
-              style={{ minWidth: '200px' }}
+              style={{ minWidth: 'min(100%, 200px)' }}
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
             >

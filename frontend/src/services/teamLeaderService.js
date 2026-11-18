@@ -18,7 +18,7 @@ export const teamLeaderService = {
     const { access_token, role, user } = response.data;
     if (access_token) {
       localStorage.setItem('arshith_auth_token', access_token);
-      localStorage.setItem('arshith_role', 'team_leader');
+      localStorage.setItem('arshith_role', role || 'team_leader');
       localStorage.setItem('arshith_user', JSON.stringify(user));
     }
     return response.data;
